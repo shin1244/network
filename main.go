@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"net"
-	"sync"
+	"server/match"
+	"server/users"
 )
 
 const (
@@ -11,30 +13,31 @@ const (
 	MsgMatch uint8 = 2
 )
 
-type matchQueue struct {
-	matchMap  map[net.Conn]bool
-	queueLock *sync.Mutex
-	queueCond *sync.Cond
+type Server struct {
+	u       *users.Users
+	q       *match.Match
+	message chan []byte
 }
 
 func main() {
 	ln, _ := net.Listen("tcp", ":9909")
 	defer ln.Close()
 
-	mq := newMatchQueue()
-	go matchMaker(mq)
+	server := newServer()
+	go server.matchMaker()
+	go server.broadcast()
 
 	for {
 		conn, _ := ln.Accept()
-		go handleConn(conn, mq)
+		go handleConn(conn, server)
 	}
 }
 
-func handleConn(conn net.Conn, mq *matchQueue) {
+func handleConn(conn net.Conn, server *Server) {
+	server.u.Add(conn)
+	fmt.Println("New connection:", conn.RemoteAddr())
 	defer func() {
-		mq.queueLock.Lock()
-		delete(mq.matchMap, conn)
-		mq.queueLock.Unlock()
+		server.u.Remove(conn)
 		conn.Close()
 	}()
 
@@ -44,49 +47,31 @@ func handleConn(conn net.Conn, mq *matchQueue) {
 
 		switch head {
 		case MsgMatch:
-			handleMatch(conn, mq)
-		}
-	}
-}
-
-func handleMatch(conn net.Conn, mq *matchQueue) {
-	mq.queueLock.Lock()
-	if _, exists := mq.matchMap[conn]; exists {
-		delete(mq.matchMap, conn)
-	} else {
-		mq.matchMap[conn] = true
-	}
-	mq.queueCond.Signal()
-	mq.queueLock.Unlock()
-}
-func newMatchQueue() *matchQueue {
-	lock := &sync.Mutex{}
-	mq := &matchQueue{
-		matchMap:  make(map[net.Conn]bool),
-		queueLock: lock,
-		queueCond: sync.NewCond(lock),
-	}
-	return mq
-}
-func matchMaker(mq *matchQueue) {
-	for {
-		mq.queueLock.Lock()
-		for len(mq.matchMap) < 2 {
-			mq.queueCond.Wait()
-		}
-
-		var p1, p2 net.Conn
-
-		for conn := range mq.matchMap {
-			if p1 == nil {
-				p1 = conn
-			} else {
-				p2 = conn
-				break
+			server.q.Toggle(conn)
+		case MsgChat:
+			msg, err := reader.ReadBytes('\n')
+			if err != nil {
+				return
 			}
+			server.message <- msg
 		}
-		delete(mq.matchMap, p1)
-		delete(mq.matchMap, p2)
-		mq.queueLock.Unlock()
 	}
+}
+
+func newServer() *Server {
+	return &Server{
+		u:       users.NewUsers(),
+		q:       match.NewMatch(),
+		message: make(chan []byte),
+	}
+}
+
+func (s *Server) broadcast() {
+	for m := range s.message {
+		s.u.Broadcast(m)
+	}
+}
+
+func (s *Server) matchMaker() {
+	s.q.MatchMaker()
 }
