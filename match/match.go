@@ -1,6 +1,7 @@
 package match
 
 import (
+	"fmt"
 	"net"
 	"sync"
 )
@@ -20,15 +21,18 @@ func NewMatch() *Match {
 	}
 }
 
-func (m *Match) Toggle(conn net.Conn) {
+func (m *Match) Toggle(conn net.Conn) bool {
 	m.lock.Lock()
+	result := false
 	if _, ok := m.queue[conn]; ok {
 		delete(m.queue, conn)
 	} else {
 		m.queue[conn] = true
+		result = true
 	}
 	m.cond.Signal()
 	m.lock.Unlock()
+	return result
 }
 
 func (m *Match) MatchMaker() {
@@ -46,8 +50,14 @@ func (m *Match) MatchMaker() {
 				break
 			}
 		}
+		fmt.Println("match!", p1, p2)
 		delete(m.queue, p1)
 		delete(m.queue, p2)
+
+		p1.Write([]byte{2})
+		p1.Write([]byte("Matched! You are Player 1.\n"))
+		p2.Write([]byte{2})
+		p2.Write([]byte("Matched! You are Player 2.\n"))
 		m.lock.Unlock()
 	}
 }

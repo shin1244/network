@@ -35,29 +35,46 @@ func main() {
 
 func handleConn(conn net.Conn, server *Server) {
 	server.u.Add(conn)
-	fmt.Println(server.u.Len())
 	defer func() {
 		server.u.Remove(conn)
 		conn.Close()
 	}()
-	server.message <- append([]byte{MsgChat}, []byte("!!\n")...)
 
 	reader := bufio.NewReader(conn)
+
 	for {
+		// 1. 헤더(명령어) 1바이트 먼저 읽기
 		head, err := reader.ReadByte()
 		if err != nil {
 			return
 		}
 
+		fmt.Println("Received head:", head)
+
 		switch head {
 		case MsgMatch:
-			server.q.Toggle(conn)
+			// 매칭은 추가 데이터 없이 헤더만으로 처리
+			isQueued := server.q.Toggle(conn)
+
+			// ★ 핵심: 클라이언트에게 현재 상태를 알려줌 (피드백)
+			if isQueued {
+				conn.Write([]byte{MsgChat})
+				conn.Write([]byte("[System] Matching queue registered.\n"))
+			} else {
+				conn.Write([]byte{MsgChat})
+				conn.Write([]byte("[System] Matching cancelled.\n"))
+			}
+			fmt.Println("Match Toggle:", isQueued)
+
 		case MsgChat:
-			msg, err := reader.ReadBytes('\n')
+			// 채팅은 엔터(\n)까지 읽기
+			body, err := reader.ReadBytes('\n')
 			if err != nil {
 				return
 			}
-			server.message <- msg
+
+			server.message <- []byte{MsgChat}
+			server.message <- body
 		}
 	}
 }
