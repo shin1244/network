@@ -35,15 +35,19 @@ func main() {
 
 func handleConn(conn net.Conn, server *Server) {
 	server.u.Add(conn)
-	fmt.Println("New connection:", conn.RemoteAddr())
+	fmt.Println(server.u.Len())
 	defer func() {
 		server.u.Remove(conn)
 		conn.Close()
 	}()
+	server.message <- append([]byte{MsgChat}, []byte("!!\n")...)
 
 	reader := bufio.NewReader(conn)
 	for {
-		head, _ := reader.ReadByte()
+		head, err := reader.ReadByte()
+		if err != nil {
+			return
+		}
 
 		switch head {
 		case MsgMatch:

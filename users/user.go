@@ -29,6 +29,13 @@ func (u *Users) Remove(conn net.Conn) {
 	u.lock.Unlock()
 }
 
+func (u *Users) Len() int {
+	u.lock.Lock()
+	defer u.lock.Unlock()
+
+	return len(u.conns)
+}
+
 func (u *Users) Broadcast(msg []byte) {
 	u.lock.Lock()
 	for c := range u.conns {
