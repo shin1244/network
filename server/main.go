@@ -22,7 +22,7 @@ type Server struct {
 func main() {
 	ln, _ := net.Listen("tcp", ":9909")
 	defer ln.Close()
-
+	fmt.Println("TCP Sever Start!!")
 	server := newServer()
 	go server.matchMaker()
 	go server.broadcast()
