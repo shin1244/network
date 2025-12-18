@@ -209,6 +209,12 @@ func main() {
 		ackChan:      make(chan Command, 100),
 	}
 
+	for i := 0; i < InputDelay; i++ {
+		game.CommandQueue[i] = make(map[int]Command)
+		game.CommandQueue[i][1] = Command{PlayerIdx: 1, ExecTick: i, Action: 0, Seq: -1}
+		game.CommandQueue[i][2] = Command{PlayerIdx: 2, ExecTick: i, Action: 0, Seq: -1}
+	}
+
 	go game.ListenAndDispatch()
 	go game.ProcessACKs()
 	go game.RetransmitPendingPackets()
