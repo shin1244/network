@@ -204,6 +204,9 @@ func main() {
 		recvCh:       make(chan Command, 100),
 		CommandQueue: make(map[int]map[int]Command),
 		CurrentTick:  0,
+		PendingMap:   make(map[int]Command),
+		Seq:          0,
+		ackChan:      make(chan Command, 100),
 	}
 
 	go game.ListenAndDispatch()
