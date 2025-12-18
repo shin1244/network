@@ -8,6 +8,8 @@ import (
 	"math"
 	"net"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -19,9 +21,7 @@ const (
 
 	Unit = 1000 // 락스텝 좌표계에서 1픽셀을 1000단위로 표현
 
-	PlayerSpeed = 4 * Unit
-
-	// 반지름: 10.0픽셀
+	PlayerSpeed  = 4 * Unit
 	PlayerRadius = 10.0
 	GridSize     = 10
 
@@ -31,8 +31,10 @@ const (
 type Command struct {
 	PlayerIdx int
 	ExecTick  int
+	Action    int
 	DestX     int
 	DestY     int
+	Seq       int
 }
 
 // 부동소수점 대신 정수 좌표계를 사용한 플레이어 구조체
@@ -46,7 +48,7 @@ type Game struct {
 	Player1 *Player
 	Player2 *Player
 
-	PlayerIdx uint8
+	PlayerIdx int
 
 	// 네트워크 관련
 	conn     *net.UDPConn
@@ -54,62 +56,84 @@ type Game struct {
 	recvCh   chan Command // 수신된 패킷을 게임 루프로 넘기는 채널
 
 	// 락스텝 관련
-	CurrentTick  int
-	CommandQueue map[int][]Command // 틱별 명령 저장소
+	CurrentTick int
+
+	PendingMap   map[int]Command
+	PendingMutex sync.Mutex
+
+	CommandQueue map[int]map[int]Command
+	Seq          int
+	ackChan      chan Command
 }
 
 func (g *Game) Update() error {
-	g.CurrentTick++
-
 Loop:
 	for {
 		select {
 		case cmd := <-g.recvCh:
-			g.CommandQueue[cmd.ExecTick] = append(g.CommandQueue[cmd.ExecTick], cmd)
+			if g.CommandQueue[cmd.ExecTick] == nil {
+				g.CommandQueue[cmd.ExecTick] = make(map[int]Command)
+			}
+			g.CommandQueue[cmd.ExecTick][cmd.PlayerIdx] = cmd
 		default:
 			break Loop
 		}
 	}
 
+	targetTick := g.CurrentTick + InputDelay
+
+	cmd := Command{
+		PlayerIdx: int(g.PlayerIdx),
+		ExecTick:  targetTick,
+		Action:    0,
+		Seq:       g.Seq,
+	}
+
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight) {
 		mx, my := ebiten.CursorPosition()
-
-		// ★ 중요: 바로 움직이지 않고 "명령"을 만듦
-		execTick := g.CurrentTick + InputDelay
-		destX := mx * Unit
-		destY := my * Unit
-
-		cmd := Command{
-			PlayerIdx: int(g.PlayerIdx),
-			ExecTick:  execTick,
-			DestX:     destX,
-			DestY:     destY,
-		}
-
-		g.CommandQueue[execTick] = append(g.CommandQueue[execTick], cmd)
-
-		sendData, _ := json.Marshal(cmd)
-		g.conn.WriteToUDP(sendData, g.peerAddr)
+		cmd.Action = 1
+		cmd.DestX = mx * Unit
+		cmd.DestY = my * Unit
 	}
 
-	if cmds, ok := g.CommandQueue[g.CurrentTick]; ok {
-		for _, cmd := range cmds {
-			var p *Player
-			switch cmd.PlayerIdx {
-			case 1:
-				p = g.Player1
-			case 2:
-				p = g.Player2
-			}
-
-			p.DestX = cmd.DestX
-			p.DestY = cmd.DestY
-		}
-		delete(g.CommandQueue, g.CurrentTick)
+	if _, ok := g.CommandQueue[targetTick]; !ok {
+		g.CommandQueue[targetTick] = make(map[int]Command)
 	}
+	g.CommandQueue[targetTick][g.PlayerIdx] = cmd
+
+	sendData, _ := json.Marshal(cmd)
+	g.conn.WriteToUDP(sendData, g.peerAddr)
+
+	g.PendingMutex.Lock()
+	g.PendingMap[g.Seq] = cmd
+	g.PendingMutex.Unlock()
+	g.Seq++
+
+	cmds, ok := g.CommandQueue[g.CurrentTick]
+	if !ok || len(cmds) < 2 {
+		return nil
+	}
+
+	p1Cmd := cmds[1]
+	if p1Cmd.Action == 1 {
+		g.Player1.DestX = p1Cmd.DestX
+		g.Player1.DestY = p1Cmd.DestY
+	}
+
+	// Player 2 명령 실행
+	p2Cmd := cmds[2]
+	if p2Cmd.Action == 1 {
+		g.Player2.DestX = p2Cmd.DestX
+		g.Player2.DestY = p2Cmd.DestY
+	}
+
+	// 실행 완료된 틱 삭제 (메모리 정리)
+	delete(g.CommandQueue, g.CurrentTick)
 
 	movePlayer(g.Player1)
 	movePlayer(g.Player2)
+
+	g.CurrentTick++
 
 	return nil
 }
@@ -174,33 +198,17 @@ func main() {
 			DestX: 540 * Unit, DestY: 240 * Unit,
 			Color: color.RGBA{255, 0, 0, 255},
 		},
-		// 네트워크 초기화
 		PlayerIdx:    playerIdx,
 		peerAddr:     peerAddr,
 		conn:         conn,
 		recvCh:       make(chan Command, 100),
-		CommandQueue: make(map[int][]Command),
+		CommandQueue: make(map[int]map[int]Command),
 		CurrentTick:  0,
 	}
 
-	go func() {
-		buffer := make([]byte, 1024)
-		for {
-			n, _, err := conn.ReadFromUDP(buffer)
-			if err != nil {
-				log.Println("패킷 수신 오류:", err)
-				continue
-			}
-			var cmd Command
-			err = json.Unmarshal(buffer[:n], &cmd)
-			if err != nil {
-				log.Println("패킷 파싱 오류:", err)
-				continue
-			}
-			fmt.Println("수신된 명령:", cmd)
-			game.recvCh <- cmd
-		}
-	}()
+	go game.ListenAndDispatch()
+	go game.ProcessACKs()
+	go game.RetransmitPendingPackets()
 
 	ebiten.SetWindowSize(ScreenWidth, ScreenHeight)
 	ebiten.SetWindowTitle("Network test -> hole punching + lockstep")
@@ -250,7 +258,7 @@ func drawGrid(screen *ebiten.Image) {
 	}
 }
 
-func MatchAndPunch() (uint8, *net.UDPAddr, *net.UDPConn) {
+func MatchAndPunch() (int, *net.UDPAddr, *net.UDPConn) {
 	addr, err := net.ResolveUDPAddr("udp", ":0")
 	if err != nil {
 		panic(err)
@@ -270,7 +278,7 @@ func MatchAndPunch() (uint8, *net.UDPAddr, *net.UDPConn) {
 		panic(err)
 	}
 
-	playerIdx := uint8(buffer[0])
+	playerIdx := int(buffer[0])
 	peerInfo := strings.TrimSpace(string(buffer[1:n]))
 
 	peerAddr, err := net.ResolveUDPAddr("udp", peerInfo)
@@ -288,4 +296,64 @@ func MatchAndPunch() (uint8, *net.UDPAddr, *net.UDPConn) {
 
 	// conn을 반환해서 게임에서 계속 쓰게 함
 	return playerIdx, peerAddr, conn
+}
+
+func (g *Game) ListenAndDispatch() {
+	buffer := make([]byte, 1024)
+	for {
+		n, _, err := g.conn.ReadFromUDP(buffer)
+		if err != nil {
+			log.Println("패킷 수신 오류:", err)
+			continue
+		}
+
+		var cmd Command
+		err = json.Unmarshal(buffer[:n], &cmd)
+		if err != nil {
+			log.Println("패킷 파싱 오류:", err)
+			continue
+		}
+
+		// ACK 수신
+		if cmd.Action == 8 {
+			g.ackChan <- cmd
+			continue
+		}
+
+		// 일반 명령 수신
+		g.recvCh <- cmd
+
+		// 3. 잘 받았다고 답장(ACK) 발송
+		ackCmd := Command{
+			PlayerIdx: int(g.PlayerIdx),
+			Action:    8,       // 8 = ACK Type
+			Seq:       cmd.Seq, // 받은 번호 그대로 돌려줌
+		}
+		ackBytes, _ := json.Marshal(ackCmd)
+		g.conn.WriteToUDP(ackBytes, g.peerAddr)
+	}
+}
+
+func (g *Game) ProcessACKs() {
+	for ack := range g.ackChan {
+		g.PendingMutex.Lock()
+		fmt.Printf("✅ ACK 수신확인: Seq=%d (보관함 삭제)\n", ack.Seq)
+		delete(g.PendingMap, ack.Seq)
+		g.PendingMutex.Unlock()
+	}
+}
+
+func (g *Game) RetransmitPendingPackets() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		g.PendingMutex.Lock()
+		for seq, cmd := range g.PendingMap {
+			sendData, _ := json.Marshal(cmd)
+			g.conn.WriteToUDP(sendData, g.peerAddr)
+			fmt.Printf("🔄 재전송 수행: Seq=%d\n", seq)
+		}
+		g.PendingMutex.Unlock()
+	}
 }
