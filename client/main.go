@@ -46,7 +46,7 @@ type Game struct {
 	Player1 *Player
 	Player2 *Player
 
-	PlayerIdx uint8 // 내 번호 (1 or 2)
+	PlayerIdx uint8
 
 	// 네트워크 관련
 	conn     *net.UDPConn
@@ -203,7 +203,7 @@ func main() {
 	}()
 
 	ebiten.SetWindowSize(ScreenWidth, ScreenHeight)
-	ebiten.SetWindowTitle("Fixed Point Network Game")
+	ebiten.SetWindowTitle("Network test -> hole punching + lockstep")
 	if err := ebiten.RunGame(game); err != nil {
 		log.Fatal(err)
 	}
