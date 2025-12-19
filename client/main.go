@@ -12,61 +12,85 @@ import (
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
 const (
 	ScreenWidth  = 640
 	ScreenHeight = 480
+	Unit         = 1000 // 고정 소수점 단위
 
-	Unit = 1000 // 락스텝 좌표계에서 1픽셀을 1000단위로 표현
+	PlayerSpeed   = 4 * Unit
+	PlayerRadius  = 12.0 // 피격 판정 조금 넉넉하게
+	RotationSpeed = 2    // 1틱당 2도 회전
 
-	PlayerSpeed  = 4 * Unit
-	PlayerRadius = 10.0
-	GridSize     = 10
+	BulletSpeed  = 8 * Unit // 총알 속도
+	BulletRadius = 6.0
 
 	InputDelay = 5
 )
 
+const (
+	ActionIdle  = 0
+	ActionMove  = 1 << 0
+	ActionShoot = 1 << 1
+)
+
+// 총알 (주인 없음, 네트워크 동기화 안 함, 오직 로직으로만 존재)
+type Bullet struct {
+	X, Y   int
+	DX, DY int
+}
+
 type Command struct {
 	PlayerIdx int
 	ExecTick  int
-	Action    int
+	Action    int // 0:Idle, 1:Move, 2:Shoot
 	DestX     int
 	DestY     int
 	Seq       int
 }
 
-// 부동소수점 대신 정수 좌표계를 사용한 플레이어 구조체
 type Player struct {
 	X, Y         int
 	DestX, DestY int
+	Angle        int // 현재 바라보는 각도
 	Color        color.Color
+	IsDead       bool // 사망 여부
+
+	LastShootTick int // 마지막 발사 틱 기록
 }
 
 type Game struct {
-	Player1 *Player
-	Player2 *Player
-
+	Player1   *Player
+	Player2   *Player
 	PlayerIdx int
 
-	// 네트워크 관련
+	// 총알 관리 (네트워크 전송 X, 로컬 시뮬레이션 O)
+	Bullets []Bullet
+
+	// 네트워크
 	conn     *net.UDPConn
 	peerAddr *net.UDPAddr
-	recvCh   chan Command // 수신된 패킷을 게임 루프로 넘기는 채널
+	recvCh   chan Command
 
-	// 락스텝 관련
-	CurrentTick int
-
+	// 락스텝 & Reliable
+	CurrentTick  int
 	PendingMap   map[int]Command
 	PendingMutex sync.Mutex
-
 	CommandQueue map[int]map[int]Command
 	Seq          int
 	ackChan      chan Command
+
+	IsGameOver bool
 }
 
 func (g *Game) Update() error {
+	if g.IsGameOver {
+		return nil
+	}
+
 Loop:
 	for {
 		select {
@@ -80,88 +104,175 @@ Loop:
 		}
 	}
 
+	// 2. 입력 처리 및 예약
 	targetTick := g.CurrentTick + InputDelay
+	g.Seq++
 
 	cmd := Command{
 		PlayerIdx: int(g.PlayerIdx),
 		ExecTick:  targetTick,
-		Action:    0,
+		Action:    ActionIdle,
 		Seq:       g.Seq,
 	}
 
+	// 플레이어 선택
+	p := g.Player1
+	if g.PlayerIdx == 2 {
+		p = g.Player2
+	}
+
+	// 이동 입력
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight) {
 		mx, my := ebiten.CursorPosition()
-		cmd.Action = 1
+		cmd.Action |= ActionMove
 		cmd.DestX = mx * Unit
 		cmd.DestY = my * Unit
 	}
 
-	if _, ok := g.CommandQueue[targetTick]; !ok {
+	// 발사 쿨타임 1초
+	shootCooldownTicks := 60
+	if ebiten.IsKeyPressed(ebiten.KeySpace) && (g.CurrentTick-p.LastShootTick >= shootCooldownTicks) {
+		cmd.Action |= ActionShoot
+		p.LastShootTick = g.CurrentTick
+	}
+
+	// 큐에 저장
+	if g.CommandQueue[targetTick] == nil {
 		g.CommandQueue[targetTick] = make(map[int]Command)
 	}
 	g.CommandQueue[targetTick][g.PlayerIdx] = cmd
 
+	// 전송 및 보관
 	sendData, _ := json.Marshal(cmd)
 	g.conn.WriteToUDP(sendData, g.peerAddr)
 
 	g.PendingMutex.Lock()
-	g.PendingMap[g.Seq] = cmd
+	g.PendingMap[cmd.Seq] = cmd
 	g.PendingMutex.Unlock()
-	g.Seq++
 
+	// 3. 락스텝 실행 조건 확인
 	cmds, ok := g.CommandQueue[g.CurrentTick]
 	if !ok || len(cmds) < 2 {
-		return nil
+		return nil // 대기
 	}
 
-	p1Cmd := cmds[1]
-	if p1Cmd.Action == 1 {
-		g.Player1.DestX = p1Cmd.DestX
-		g.Player1.DestY = p1Cmd.DestY
-	}
+	// -----------------------------------------------------------
+	// ★ 결정론적 시뮬레이션 시작
+	// -----------------------------------------------------------
 
-	// Player 2 명령 실행
-	p2Cmd := cmds[2]
-	if p2Cmd.Action == 1 {
-		g.Player2.DestX = p2Cmd.DestX
-		g.Player2.DestY = p2Cmd.DestY
-	}
+	// (1) 플레이어 회전
+	g.Player1.Angle = (g.Player1.Angle + RotationSpeed) % 360
+	g.Player2.Angle = (g.Player2.Angle + RotationSpeed) % 360
 
-	// 실행 완료된 틱 삭제 (메모리 정리)
+	// (2) 명령 실행
+	g.ExecuteCommand(g.Player1, cmds[1])
+	g.ExecuteCommand(g.Player2, cmds[2])
+
+	// (3) 물리 엔진 업데이트
+	g.UpdatePhysics()
+
+	// 메모리 정리 및 틱 증가
 	delete(g.CommandQueue, g.CurrentTick)
-
-	movePlayer(g.Player1)
-	movePlayer(g.Player2)
-
 	g.CurrentTick++
 
 	return nil
 }
 
-// movePlayer: 정수 연산만 사용해서 이동
+func (g *Game) ExecuteCommand(p *Player, cmd Command) {
+	if cmd.Action&ActionMove != 0 {
+		p.DestX = cmd.DestX
+		p.DestY = cmd.DestY
+	}
+	if cmd.Action&ActionShoot != 0 {
+		rad := float64(p.Angle) * math.Pi / 180.0
+		dx := int(math.Cos(rad) * float64(BulletSpeed))
+		dy := int(math.Sin(rad) * float64(BulletSpeed))
+		newBullet := Bullet{
+			X: p.X, Y: p.Y,
+			DX: dx, DY: dy,
+		}
+		g.Bullets = append(g.Bullets, newBullet)
+	}
+}
+
+// 물리 엔진: 총알 이동, 튕기기, 충돌 판정
+func (g *Game) UpdatePhysics() {
+	// 1. 플레이어 이동
+	movePlayer(g.Player1)
+	movePlayer(g.Player2)
+
+	// 2. 총알 처리
+	// 화면 경계 (x1000 단위)
+	limitX := ScreenWidth * Unit
+	limitY := ScreenHeight * Unit
+
+	for i := range g.Bullets {
+		b := &g.Bullets[i]
+
+		// 이동
+		b.X += b.DX
+		b.Y += b.DY
+
+		// 벽 튕기기 (좌우)
+		if b.X <= 0 {
+			b.X = 0      // 끼임 방지
+			b.DX = -b.DX // 반사
+		} else if b.X >= limitX {
+			b.X = limitX
+			b.DX = -b.DX
+		}
+
+		// 벽 튕기기 (상하)
+		if b.Y <= 0 {
+			b.Y = 0
+			b.DY = -b.DY
+		} else if b.Y >= limitY {
+			b.Y = limitY
+			b.DY = -b.DY
+		}
+
+		// 충돌 체크 (총알 -> 플레이어 1)
+		if checkCollision(b, g.Player1) {
+			g.Player1.IsDead = true
+			g.IsGameOver = true
+		}
+		// 충돌 체크 (총알 -> 플레이어 2)
+		if checkCollision(b, g.Player2) {
+			g.Player2.IsDead = true
+			g.IsGameOver = true
+		}
+	}
+}
+
+// 충돌 감지 (거리 계산)
+func checkCollision(b *Bullet, p *Player) bool {
+	dx := b.X - p.X
+	dy := b.Y - p.Y
+	// 제곱 거리로 비교 (sqrt 성능 최적화)
+	distSq := int64(dx)*int64(dx) + int64(dy)*int64(dy)
+
+	// 판정 반지름 합
+	radiusSum := int64((PlayerRadius + BulletRadius) * Unit) // x1000 된 상태
+	// Unit이 제곱되면 너무 커지므로, 비교할 때 주의 (여기선 반지름이 작아서 괜찮음)
+
+	// 간단하게: 실제 거리(픽셀)로 변환해서 비교
+	// (x1000 상태의 거리) < (반지름 합 * 1000)
+	// 안전하게 float 변환 후 비교 (정확도보다 오버플로우 방지)
+	dist := math.Sqrt(float64(distSq))
+
+	return dist < float64(radiusSum)
+}
+
 func movePlayer(p *Player) {
-	// 거리 차이 (정수)
 	dx := p.DestX - p.X
 	dy := p.DestY - p.Y
+	dist := int(math.Sqrt(float64(dx*dx + dy*dy)))
 
-	// 거리 계산 (피타고라스)
-	// 제곱하면 숫자가 엄청 커지므로 int64나 float 변환을 잠깐 써야 합니다.
-	// (엄격한 락스텝에선 정수 sqrt 함수를 따로 구현하지만, 여기선 편의상 math.Sqrt 사용 후 다시 int로 만듭니다)
-	distFloat := math.Sqrt(float64(dx*dx + dy*dy))
-	dist := int(distFloat)
-
-	// 도착 판정 (오차 범위 내)
 	if dist < PlayerSpeed {
-		p.X = p.DestX
-		p.Y = p.DestY
+		p.X, p.Y = p.DestX, p.DestY
 		return
 	}
-
-	// 이동 (비례식 적용)
-	// 공식: X += dx * (속도 / 거리)
-	// 주의: 정수 나눗셈은 소수점이 버려지므로 곱하기를 먼저 해야 함!
-
-	if dist > 0 { // 0으로 나누기 방지
+	if dist > 0 {
 		p.X += (dx * PlayerSpeed) / dist
 		p.Y += (dy * PlayerSpeed) / dist
 	}
@@ -170,141 +281,44 @@ func movePlayer(p *Player) {
 func (g *Game) Draw(screen *ebiten.Image) {
 	drawGrid(screen)
 
-	// ★ 그리기 단계: 여기서만 1000으로 나눔
-	drawX1 := float32(g.Player1.X) / Unit
-	drawY1 := float32(g.Player1.Y) / Unit
-	vector.FillCircle(screen, drawX1, drawY1, PlayerRadius, g.Player1.Color, true)
-
-	drawX2 := float32(g.Player2.X) / Unit
-	drawY2 := float32(g.Player2.Y) / Unit
-	vector.FillCircle(screen, drawX2, drawY2, PlayerRadius, g.Player2.Color, true)
-}
-
-func (g *Game) Layout(w, h int) (int, int) {
-	return ScreenWidth, ScreenHeight
-}
-
-func main() {
-	playerIdx, peerAddr, conn := MatchAndPunch()
-
-	game := &Game{
-		Player1: &Player{
-			X: 100 * Unit, Y: 240 * Unit,
-			DestX: 100 * Unit, DestY: 240 * Unit,
-			Color: color.RGBA{0, 0, 255, 255},
-		},
-		Player2: &Player{
-			X: 540 * Unit, Y: 240 * Unit,
-			DestX: 540 * Unit, DestY: 240 * Unit,
-			Color: color.RGBA{255, 0, 0, 255},
-		},
-		PlayerIdx:    playerIdx,
-		peerAddr:     peerAddr,
-		conn:         conn,
-		recvCh:       make(chan Command, 100),
-		CommandQueue: make(map[int]map[int]Command),
-		CurrentTick:  0,
-		PendingMap:   make(map[int]Command),
-		Seq:          0,
-		ackChan:      make(chan Command, 100),
+	// 총알 그리기 (흰색 작은 점)
+	for _, b := range g.Bullets {
+		vector.FillCircle(screen, float32(b.X)/Unit, float32(b.Y)/Unit, BulletRadius, color.White, true)
 	}
 
-	for i := 0; i < InputDelay; i++ {
-		game.CommandQueue[i] = make(map[int]Command)
-		game.CommandQueue[i][1] = Command{PlayerIdx: 1, ExecTick: i, Action: 0, Seq: -1}
-		game.CommandQueue[i][2] = Command{PlayerIdx: 2, ExecTick: i, Action: 0, Seq: -1}
-	}
+	// 플레이어 그리기
+	drawPlayer(screen, g.Player1)
+	drawPlayer(screen, g.Player2)
 
-	go game.ListenAndDispatch()
-	go game.ProcessACKs()
-	go game.RetransmitPendingPackets()
-
-	ebiten.SetWindowSize(ScreenWidth, ScreenHeight)
-	ebiten.SetWindowTitle("Network test -> hole punching + lockstep")
-	if err := ebiten.RunGame(game); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func drawGrid(screen *ebiten.Image) {
-	// 어두운 회색 배경
-	screen.Fill(color.RGBA{20, 20, 20, 255})
-
-	// 눈금 색
-	gridColor := color.RGBA{60, 60, 60, 255}
-	axisColor := color.RGBA{120, 120, 120, 255}
-
-	// 세로선
-	for x := 0; x <= ScreenWidth; x += GridSize {
-		c := gridColor
-		if x == ScreenWidth/2 {
-			c = axisColor
+	// 게임 오버 메시지
+	if g.IsGameOver {
+		msg := "GAME OVER"
+		if g.Player1.IsDead && g.Player2.IsDead {
+			msg += "\nDraw!"
+		} else if g.Player1.IsDead {
+			msg += "\nPlayer 2 Wins!"
+		} else {
+			msg += "\nPlayer 1 Wins!"
 		}
-		vector.StrokeLine(
-			screen,
-			float32(x), 0,
-			float32(x), ScreenHeight,
-			1,
-			c,
-			true,
-		)
-	}
-
-	// 가로선
-	for y := 0; y <= ScreenHeight; y += GridSize {
-		c := gridColor
-		if y == ScreenHeight/2 {
-			c = axisColor
-		}
-		vector.StrokeLine(
-			screen,
-			0, float32(y),
-			ScreenWidth, float32(y),
-			1,
-			c,
-			true,
-		)
+		ebitenutil.DebugPrintAt(screen, msg, ScreenWidth/2-40, ScreenHeight/2)
+	} else {
+		ebitenutil.DebugPrint(screen, fmt.Sprintf("Tick: %d\nBullets: %d", g.CurrentTick, len(g.Bullets)))
 	}
 }
 
-func MatchAndPunch() (int, *net.UDPAddr, *net.UDPConn) {
-	addr, err := net.ResolveUDPAddr("udp", ":0")
-	if err != nil {
-		panic(err)
-	}
+func drawPlayer(screen *ebiten.Image, p *Player) {
+	if p.IsDead {
+		return
+	} // 죽으면 안 그림
 
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		panic(err)
-	}
+	px, py := float32(p.X)/Unit, float32(p.Y)/Unit
+	vector.FillCircle(screen, px, py, PlayerRadius, p.Color, true)
 
-	serverAddr, _ := net.ResolveUDPAddr("udp", "210.57.239.71:45678")
-	conn.WriteToUDP([]byte("new"), serverAddr)
-
-	buffer := make([]byte, 1024)
-	n, _, err := conn.ReadFromUDP(buffer)
-	if err != nil {
-		panic(err)
-	}
-
-	playerIdx := int(buffer[0])
-	peerInfo := strings.TrimSpace(string(buffer[1:n]))
-
-	peerAddr, err := net.ResolveUDPAddr("udp", peerInfo)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println("--------------------------------")
-	fmt.Printf("매칭 성공! 상대방 주소: %s\n", peerAddr.String())
-	fmt.Println("--------------------------------")
-
-	for i := 0; i < 3; i++ {
-		conn.WriteToUDP([]byte("punch"), peerAddr)
-	}
-
-	// conn을 반환해서 게임에서 계속 쓰게 함
-	return playerIdx, peerAddr, conn
+	// 회전 방향 표시 (눈)
+	rad := float64(p.Angle) * math.Pi / 180.0
+	ex := px + float32(math.Cos(rad)*20)
+	ey := py + float32(math.Sin(rad)*20)
+	vector.StrokeLine(screen, px, py, ex, ey, 2, color.White, true)
 }
 
 func (g *Game) ListenAndDispatch() {
@@ -312,41 +326,29 @@ func (g *Game) ListenAndDispatch() {
 	for {
 		n, _, err := g.conn.ReadFromUDP(buffer)
 		if err != nil {
-			log.Println("패킷 수신 오류:", err)
 			continue
 		}
-
 		var cmd Command
-		err = json.Unmarshal(buffer[:n], &cmd)
-		if err != nil {
-			log.Println("패킷 파싱 오류:", err)
+		if err := json.Unmarshal(buffer[:n], &cmd); err != nil {
 			continue
 		}
 
-		// ACK 수신
 		if cmd.Action == 8 {
 			g.ackChan <- cmd
 			continue
 		}
-
-		// 일반 명령 수신
 		g.recvCh <- cmd
 
-		// 3. 잘 받았다고 답장(ACK) 발송
-		ackCmd := Command{
-			PlayerIdx: int(g.PlayerIdx),
-			Action:    8,       // 8 = ACK Type
-			Seq:       cmd.Seq, // 받은 번호 그대로 돌려줌
-		}
-		ackBytes, _ := json.Marshal(ackCmd)
-		g.conn.WriteToUDP(ackBytes, g.peerAddr)
+		// ACK 답장
+		ack := Command{PlayerIdx: g.PlayerIdx, Action: 8, Seq: cmd.Seq}
+		data, _ := json.Marshal(ack)
+		g.conn.WriteToUDP(data, g.peerAddr)
 	}
 }
 
 func (g *Game) ProcessACKs() {
 	for ack := range g.ackChan {
 		g.PendingMutex.Lock()
-		fmt.Printf("✅ ACK 수신확인: Seq=%d (보관함 삭제)\n", ack.Seq)
 		delete(g.PendingMap, ack.Seq)
 		g.PendingMutex.Unlock()
 	}
@@ -354,15 +356,68 @@ func (g *Game) ProcessACKs() {
 
 func (g *Game) RetransmitPendingPackets() {
 	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
 	for range ticker.C {
 		g.PendingMutex.Lock()
-		for seq, cmd := range g.PendingMap {
-			sendData, _ := json.Marshal(cmd)
-			g.conn.WriteToUDP(sendData, g.peerAddr)
-			fmt.Printf("🔄 재전송 수행: Seq=%d\n", seq)
+		for _, cmd := range g.PendingMap {
+			data, _ := json.Marshal(cmd)
+			g.conn.WriteToUDP(data, g.peerAddr)
 		}
 		g.PendingMutex.Unlock()
 	}
+}
+
+func main() {
+	playerIdx, peerAddr, conn := MatchAndPunch()
+
+	game := &Game{
+		Player1:      &Player{X: 100 * Unit, Y: 240 * Unit, DestX: 100 * Unit, DestY: 240 * Unit, Color: color.RGBA{0, 0, 255, 255}},
+		Player2:      &Player{X: 540 * Unit, Y: 240 * Unit, DestX: 540 * Unit, DestY: 240 * Unit, Color: color.RGBA{255, 0, 0, 255}},
+		PlayerIdx:    playerIdx,
+		peerAddr:     peerAddr,
+		conn:         conn,
+		recvCh:       make(chan Command, 100),
+		CommandQueue: make(map[int]map[int]Command),
+		PendingMap:   make(map[int]Command),
+		ackChan:      make(chan Command, 100),
+		Seq:          1,
+	}
+
+	// ★ 중요: 0~4 틱(Delay) 채우기
+	for i := 0; i < InputDelay; i++ {
+		game.CommandQueue[i] = make(map[int]Command)
+		game.CommandQueue[i][1] = Command{PlayerIdx: 1, ExecTick: i, Action: 0}
+		game.CommandQueue[i][2] = Command{PlayerIdx: 2, ExecTick: i, Action: 0}
+	}
+
+	go game.ListenAndDispatch()
+	go game.ProcessACKs()
+	go game.RetransmitPendingPackets()
+
+	ebiten.SetWindowSize(ScreenWidth, ScreenHeight)
+	ebiten.SetWindowTitle("P2P")
+	if err := ebiten.RunGame(game); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// ... drawGrid, MatchAndPunch, Layout 등은 이전과 동일하므로 생략하지 않고 그대로 쓰시면 됩니다.
+func (g *Game) Layout(w, h int) (int, int) { return ScreenWidth, ScreenHeight }
+func drawGrid(screen *ebiten.Image)        { /* 이전 코드 복붙 */ }
+func MatchAndPunch() (int, *net.UDPAddr, *net.UDPConn) {
+	// 이전 코드와 동일 (테스트용)
+	addr, _ := net.ResolveUDPAddr("udp", ":0")
+	conn, _ := net.ListenUDP("udp", addr)
+	serverAddr, _ := net.ResolveUDPAddr("udp", "210.57.239.71:45678")
+	conn.WriteToUDP([]byte("new"), serverAddr)
+	buf := make([]byte, 1024)
+	n, _, _ := conn.ReadFromUDP(buf)
+	pIdx := int(buf[0])
+	pInfo := strings.TrimSpace(string(buf[1:n]))
+	pAddr, _ := net.ResolveUDPAddr("udp", pInfo)
+	fmt.Printf("Matched: %s\n", pAddr.String())
+	for i := 0; i < 10; i++ {
+		conn.WriteToUDP([]byte("punch"), pAddr)
+		time.Sleep(10 * time.Millisecond)
+	}
+	return pIdx, pAddr, conn
 }
