@@ -187,8 +187,13 @@ func (g *Game) ExecuteCommand(p *Player, cmd Command) {
 		rad := float64(p.Angle) * math.Pi / 180.0
 		dx := int(math.Cos(rad) * float64(BulletSpeed))
 		dy := int(math.Sin(rad) * float64(BulletSpeed))
+
+		// ★ 총알 초기 위치: 플레이어 앞쪽
+		startX := p.X + int(math.Cos(rad)*float64(PlayerRadius+BulletRadius)*Unit/1000)
+		startY := p.Y + int(math.Sin(rad)*float64(PlayerRadius+BulletRadius)*Unit/1000)
+
 		newBullet := Bullet{
-			X: p.X, Y: p.Y,
+			X: startX, Y: startY,
 			DX: dx, DY: dy,
 		}
 		g.Bullets = append(g.Bullets, newBullet)
