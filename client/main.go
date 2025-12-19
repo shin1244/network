@@ -129,11 +129,12 @@ Loop:
 		cmd.DestY = my * Unit
 	}
 
-	// 발사 쿨타임 1초
+	// 발사 쿨타임 1초 (60틱)
 	shootCooldownTicks := 60
 	if ebiten.IsKeyPressed(ebiten.KeySpace) && (g.CurrentTick-p.LastShootTick >= shootCooldownTicks) {
 		cmd.Action |= ActionShoot
-		p.LastShootTick = g.CurrentTick
+		// 로컬 예측용 업데이트가 아니라, 서버 확정 시점에 업데이트해야 하므로 여기선 LastShootTick 갱신 안 함
+		// (ExecuteCommand에서 갱신)
 	}
 
 	// 큐에 저장
@@ -183,20 +184,24 @@ func (g *Game) ExecuteCommand(p *Player, cmd Command) {
 		p.DestX = cmd.DestX
 		p.DestY = cmd.DestY
 	}
+
 	if cmd.Action&ActionShoot != 0 {
 		rad := float64(p.Angle) * math.Pi / 180.0
+
+		spawnOffset := (PlayerRadius + BulletRadius + 4.0) * Unit
+		spawnX := p.X + int(math.Cos(rad)*float64(spawnOffset))
+		spawnY := p.Y + int(math.Sin(rad)*float64(spawnOffset))
+
 		dx := int(math.Cos(rad) * float64(BulletSpeed))
 		dy := int(math.Sin(rad) * float64(BulletSpeed))
 
-		// ★ 총알 초기 위치: 플레이어 앞쪽
-		startX := p.X + int(math.Cos(rad)*float64(PlayerRadius+BulletRadius)*Unit/1000)
-		startY := p.Y + int(math.Sin(rad)*float64(PlayerRadius+BulletRadius)*Unit/1000)
-
 		newBullet := Bullet{
-			X: startX, Y: startY,
+			X: spawnX, Y: spawnY,
 			DX: dx, DY: dy,
 		}
 		g.Bullets = append(g.Bullets, newBullet)
+
+		p.LastShootTick = g.CurrentTick // 발사 시점 기록
 	}
 }
 
