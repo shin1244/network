@@ -31,7 +31,7 @@
 * **Bullet Hell Physics:** 총알은 벽에 튕기며(Bounce), 네트워크 동기화 없이도 양쪽 화면에서 완벽하게 동일한 궤적을 그립니다.
 * **Concurrency:** `Goroutines`와 `Channels`, `Mutex`를 활용하여 렌더링, 네트워크 수신, 재전송 로직을 병렬로 처리합니다.
 
-| Gameplay 1 | Gameplay 2 |
+| Player 1 | Player 2 |
 | :---: | :---: |
 | <img src="https://github.com/user-attachments/assets/2098bb22-f408-43f5-a93e-3ef57bc6c732" alt="p1" width="100%"> | <img src="https://github.com/user-attachments/assets/bf685b51-a2b4-4603-a759-a86b0921ab0e" alt="p2" width="100%"> |=
 * 1분 이상 진행된 게임도 각 클라이언트에서 완벽하게 동일한 상태를 가집니다.
