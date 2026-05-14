@@ -1,13 +1,24 @@
 package lobby
 
 import (
+	"encoding/binary"
 	"fmt"
 	"image/color"
+	"log"
+	"pong/network"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
+)
+
+type LobbyCommand byte
+
+const (
+	LobbyCreateRoom LobbyCommand = iota
+	LobbyJoinRoom
+	LobbyRefreshRooms
 )
 
 const (
@@ -23,6 +34,8 @@ type Lobby struct {
 	PrevBtn      Button
 	NextBtn      Button
 	JoinBtnIndex int
+
+	Client *network.Client
 }
 
 type Room struct {
@@ -51,7 +64,7 @@ func (l *Lobby) getPageRange() (start, end int) {
 	return
 }
 
-func NewLobby() *Lobby {
+func NewLobby(client *network.Client) *Lobby {
 	l := &Lobby{
 		JoinBtnIndex: -1,
 		Page:         0,
@@ -59,22 +72,10 @@ func NewLobby() *Lobby {
 		CreateBtn:    Button{X: 470, Y: 400, W: 120, H: 40, Text: "Create Room"},
 		PrevBtn:      Button{X: 220, Y: 400, W: 80, H: 40, Text: "<"},
 		NextBtn:      Button{X: 320, Y: 400, W: 80, H: 40, Text: ">"},
-	}
-	l.loadMockRooms()
-	return l
-}
 
-func (l *Lobby) loadMockRooms() {
-	l.Rooms = []Room{
-		{ID: 1, Name: "Room 1 (TEST)", PlayerCnt: 1},
-		{ID: 2, Name: "Room 2 (TEST)", PlayerCnt: 2},
-		{ID: 3, Name: "Room 3 (TEST)", PlayerCnt: 1},
-		{ID: 4, Name: "Room 4 (TEST)", PlayerCnt: 1},
-		{ID: 5, Name: "Room 5 (TEST)", PlayerCnt: 1},
-		{ID: 6, Name: "Room 6 (TEST)", PlayerCnt: 1},
-		{ID: 7, Name: "Room 7 (TEST)", PlayerCnt: 1},
-		{ID: 8, Name: "Room 8 (TEST)", PlayerCnt: 1},
+		Client: client,
 	}
+	return l
 }
 
 func (l *Lobby) Update() error {
@@ -100,9 +101,14 @@ func (l *Lobby) Update() error {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 
 		if l.RefreshBtn.Hovered {
-			l.loadMockRooms()
+			if err := l.refreshRooms(); err != nil {
+				log.Printf("failed to refresh rooms: %v", err)
+			}
 
 		} else if l.CreateBtn.Hovered {
+			if err := l.createRoom("Test Room"); err != nil {
+				log.Printf("failed to create room: %v", err)
+			}
 
 		} else if l.PrevBtn.Hovered {
 			if l.Page > 0 {
@@ -120,10 +126,14 @@ func (l *Lobby) Update() error {
 		} else if l.JoinBtnIndex != -1 {
 			room := l.Rooms[l.JoinBtnIndex]
 			if room.PlayerCnt < MaxPlayers {
+				if err := l.joinRoom(int32(room.ID)); err != nil {
+					log.Printf("failed to join room: %v", err)
+				}
 				fmt.Printf("[%s] 입장\n", room.Name)
 			}
 		}
 	}
+	l.HandleServerEvent()
 
 	return nil
 }
@@ -188,4 +198,66 @@ func (l *Lobby) Draw(screen *ebiten.Image) {
 
 func (l *Lobby) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
 	return 640, 480
+}
+
+func (l *Lobby) refreshRooms() error {
+	client := l.Client
+	return client.WritePacket([]byte{byte(LobbyRefreshRooms)})
+}
+
+func (l *Lobby) createRoom(name string) error {
+	packet := append([]byte{byte(LobbyCreateRoom)}, []byte(name)...)
+	return l.Client.WritePacket(packet)
+}
+
+func (l *Lobby) joinRoom(roomID int32) error {
+	packet := make([]byte, 5)
+	packet[0] = byte(LobbyJoinRoom)
+	binary.BigEndian.PutUint32(packet[1:5], uint32(roomID))
+	return l.Client.WritePacket(packet)
+}
+
+func (l *Lobby) HandleServerEvent() {
+	select {
+	case event := <-l.Client.Events:
+		fmt.Printf("서버 이벤트 수신: %v\n", event)
+		if event.Data == nil {
+			log.Println("서버와의 연결이 끊어졌습니다.")
+			return
+		}
+
+		scene := event.Data[0]
+		cmd := event.Data[1]
+
+		if scene != byte(0) {
+			return
+		}
+
+		switch cmd {
+		case byte(LobbyRefreshRooms):
+			roomCount := int(event.Data[2])
+			rooms := make([]Room, roomCount)
+
+			offset := 3
+			for i := 0; i < roomCount; i++ {
+				roomID := int(binary.BigEndian.Uint32(event.Data[offset : offset+4]))
+				offset += 4
+				roomNameLen := int(event.Data[offset])
+				offset++
+				roomName := string(event.Data[offset : offset+roomNameLen])
+				offset += roomNameLen
+				playerCnt := int(event.Data[offset])
+				offset++
+
+				rooms[i] = Room{
+					ID:        roomID,
+					Name:      roomName,
+					PlayerCnt: playerCnt,
+				}
+			}
+			l.Rooms = rooms
+		}
+	default:
+		return
+	}
 }
