@@ -9,21 +9,21 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 )
 
-type Game struct {
+type SceneManager struct {
 	current ebiten.Game
 
 	client *network.Client
 }
 
-func (g *Game) Update() error {
+func (g *SceneManager) Update() error {
 	return g.current.Update()
 }
 
-func (g *Game) Draw(screen *ebiten.Image) {
+func (g *SceneManager) Draw(screen *ebiten.Image) {
 	g.current.Draw(screen)
 }
 
-func (g *Game) Layout(w, h int) (int, int) {
+func (g *SceneManager) Layout(w, h int) (int, int) {
 	return g.current.Layout(w, h)
 }
 
@@ -36,20 +36,21 @@ func main() {
 	ebiten.SetWindowSize(ScreenWidth, ScreenHeight)
 	ebiten.SetWindowTitle("P2P Pong - Lobby")
 
-	g := NewGame()
-	go g.client.Readloop()
-	if err := ebiten.RunGame(g); err != nil {
+	sm := NewSceneManager()
+	go sm.client.Readloop()
+
+	if err := ebiten.RunGame(sm); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func NewGame() *Game {
+func NewSceneManager() *SceneManager {
 	client := network.NewClient("localhost:9000")
 	if err := client.Connect(); err != nil {
 		log.Printf("failed to connect to server: %v", err)
 	}
 
-	return &Game{
+	return &SceneManager{
 		current: lobby.NewLobby(client),
 		client:  client,
 	}
