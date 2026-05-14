@@ -49,9 +49,15 @@ func NewSceneManager() *SceneManager {
 	if err := client.Connect(); err != nil {
 		log.Printf("failed to connect to server: %v", err)
 	}
+	l := lobby.NewLobby(client)
+	l.OnChangeScene = func(scene []byte) {
+		if scene[1] == 1 {
+			log.Println("Switching to game scene (not implemented)")
+		}
+	}
 
 	return &SceneManager{
-		current: lobby.NewLobby(client),
+		current: l,
 		client:  client,
 	}
 }

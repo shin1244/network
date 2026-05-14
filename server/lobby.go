@@ -40,7 +40,7 @@ func (s *Server) LobbyManager(msg Message) {
 	case LobbyJoinRoom:
 		roomID := int32(binary.BigEndian.Uint32(msg.Data[1:5]))
 		s.JoinRoom(msg.Client, roomID)
-		fmt.Printf("Client %d requested to join room %d\n", msg.Client.ID, roomID)
+		fmt.Printf("Room %d joined\n", roomID)
 	case LobbyRefreshRooms:
 		s.refreshRooms(msg.Client)
 		fmt.Printf("Client %d requested room list refresh\n", msg.Client.ID)
@@ -59,8 +59,14 @@ func (s *Server) JoinRoom(client *Client, roomID int32) {
 		fmt.Printf("Room %d does not exist\n", roomID)
 		return
 	}
+
 	room.Players = append(room.Players, client)
 	client.State = ClientStateGame
+
+	buf := []byte{byte(ClientStateLobby)}
+	buf = append(buf, byte(LobbyJoinRoom))
+	buf = append(buf, byte(roomID))
+	client.WritePacket(buf)
 }
 
 // [Scene] [SceneCommand] [roomLen] [[roomID][nameLen][roomName][roomPlayerCount]...]

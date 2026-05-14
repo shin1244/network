@@ -37,7 +37,7 @@ type Lobby struct {
 
 	Client *network.Client
 
-	OnChangeScene func(scene byte)
+	OnChangeScene func(data []byte)
 }
 
 type Room struct {
@@ -210,13 +210,7 @@ func (l *Lobby) HandleServerEvent() {
 		case byte(LobbyRefreshRooms):
 			l.handleRoomList(event.Data)
 		case byte(LobbyJoinRoom):
-			l.OnChangeScene(1) // 게임 씬으로 전환
+			l.OnChangeScene(event.Data)
 		}
 	}
 }
-
-// func (l *Lobby) OnChangeScene(scene byte) {
-// 	if l.OnChangeScene != nil {
-// 		l.OnChangeScene(scene)
-// 	}
-// }
