@@ -27,13 +27,13 @@ type Lobby struct {
 
 // Lobby 함수는 클라이언트로부터 받은 데이터를 처리하여 로비 관련 명령을 수행합니다.
 func (l *Lobby) LobbyManager(msg Message) {
-	switch LobbyCommand(msg.Data[0]) {
+	switch LobbyCommand(msg.Command) {
 	case LobbyCreateRoom:
-		roomName := string(msg.Data[1:])
+		roomName := string(msg.Payload)
 		l.createRoom(roomName)
 		fmt.Printf("Room '%s' created\n", roomName)
 	case LobbyJoinRoom:
-		roomID := int32(binary.BigEndian.Uint32(msg.Data[1:5]))
+		roomID := int32(binary.BigEndian.Uint32(msg.Payload))
 		l.JoinRoom(msg.Client, roomID)
 		fmt.Printf("Room %d joined\n", roomID)
 	case LobbyRefreshRooms:

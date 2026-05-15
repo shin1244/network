@@ -151,6 +151,7 @@ func (l *Lobby) handleClick() {
 	}
 }
 
+// [Scene] [Command] [length: 0]
 func (l *Lobby) sendRefreshRooms() error {
 	packet := network.MakePacket(
 		byte(0),
@@ -161,6 +162,7 @@ func (l *Lobby) sendRefreshRooms() error {
 	return l.Client.WritePacket(packet)
 }
 
+// [Scene] [Command] [nameLenght] [name]
 func (l *Lobby) sendCreateRoom(name string) error {
 	if len(name) == 0 || len(name) > MaxRoomTitleBytes {
 		return fmt.Errorf(
@@ -183,6 +185,7 @@ func (l *Lobby) sendCreateRoom(name string) error {
 	return l.Client.WritePacket(packet)
 }
 
+// [Scene] [Command] [length] [roomID]
 func (l *Lobby) sendJoinRoom(roomID int32) error {
 	payload := make([]byte, 4)
 

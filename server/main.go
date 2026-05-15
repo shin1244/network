@@ -24,7 +24,7 @@ type Message struct {
 	Client  *Client
 	Scene   byte
 	Command byte
-	Data    []byte
+	Payload []byte
 }
 
 type Client struct {
@@ -144,7 +144,7 @@ func (s *Server) readLoop(c *Client) {
 			Client:  c,
 			Scene:   scene,
 			Command: command,
-			Data:    payload,
+			Payload: payload,
 		}
 	}
 }
