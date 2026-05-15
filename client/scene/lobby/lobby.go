@@ -237,7 +237,7 @@ func (l *Lobby) HandleServerEvent() {
 		cmd := event.SceneCommand
 
 		if scene != byte(0) {
-			return
+			continue
 		}
 
 		switch cmd {
