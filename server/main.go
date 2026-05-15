@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"sync/atomic"
 )
@@ -19,8 +21,10 @@ type Server struct {
 }
 
 type Message struct {
-	Client *Client
-	Data   []byte
+	Client  *Client
+	Scene   byte
+	Command byte
+	Data    []byte
 }
 
 type Client struct {
@@ -110,16 +114,38 @@ func (s *Server) generateClientID() int32 {
 }
 
 func (s *Server) readLoop(c *Client) {
-	buf := make([]byte, 1024)
 	for {
-		n, err := c.Conn.Read(buf)
+		header := make([]byte, 6)
+
+		_, err := io.ReadFull(c.Conn, header)
 		if err != nil {
 			fmt.Printf("Client %d disconnected\n", c.ID)
 			return
 		}
-		data := make([]byte, n)
-		copy(data, buf[:n])
-		s.Read <- Message{Client: c, Data: data}
+
+		scene := header[0]
+		command := header[1]
+
+		payloadLength := binary.BigEndian.Uint32(
+			header[2:6],
+		)
+
+		// Payload 읽기
+		payload := make([]byte, payloadLength)
+
+		_, err = io.ReadFull(c.Conn, payload)
+		if err != nil {
+			fmt.Printf("Client %d disconnected\n", c.ID)
+			return
+		}
+
+		// 완성된 packet 전달
+		s.Read <- Message{
+			Client:  c,
+			Scene:   scene,
+			Command: command,
+			Data:    payload,
+		}
 	}
 }
 

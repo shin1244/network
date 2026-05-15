@@ -108,3 +108,17 @@ func (c *Client) Readloop() {
 		}
 	}
 }
+
+func MakePacket(scene byte, command byte, payload []byte) []byte {
+	header := make([]byte, 6)
+
+	header[0] = scene
+	header[1] = command
+
+	binary.BigEndian.PutUint32(
+		header[2:6],
+		uint32(len(payload)),
+	)
+
+	return append(header, payload...)
+}

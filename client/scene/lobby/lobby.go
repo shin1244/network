@@ -152,18 +152,48 @@ func (l *Lobby) handleClick() {
 }
 
 func (l *Lobby) sendRefreshRooms() error {
-	return l.Client.WritePacket([]byte{byte(LobbyRefreshRooms)})
+	packet := network.MakePacket(
+		byte(0),
+		byte(LobbyRefreshRooms),
+		nil,
+	)
+
+	return l.Client.WritePacket(packet)
 }
 
 func (l *Lobby) sendCreateRoom(name string) error {
-	packet := append([]byte{byte(LobbyCreateRoom)}, []byte(name)...)
+	if len(name) == 0 || len(name) > MaxRoomTitleBytes {
+		return fmt.Errorf(
+			"room name must be between 1 and %d bytes",
+			MaxRoomTitleBytes,
+		)
+	}
+
+	payload := append(
+		[]byte{byte(len(name))},
+		[]byte(name)...,
+	)
+
+	packet := network.MakePacket(
+		byte(0),
+		byte(LobbyCreateRoom),
+		payload,
+	)
+
 	return l.Client.WritePacket(packet)
 }
 
 func (l *Lobby) sendJoinRoom(roomID int32) error {
-	packet := make([]byte, 5)
-	packet[0] = byte(LobbyJoinRoom)
-	binary.BigEndian.PutUint32(packet[1:5], uint32(roomID))
+	payload := make([]byte, 4)
+
+	binary.BigEndian.PutUint32(payload, uint32(roomID))
+
+	packet := network.MakePacket(
+		byte(0),
+		byte(LobbyJoinRoom),
+		payload,
+	)
+
 	return l.Client.WritePacket(packet)
 }
 
