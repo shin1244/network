@@ -9,7 +9,8 @@ import (
 type Server struct {
 	Join  chan *Client
 	Leave chan *Client
-	Msg   chan Message
+
+	Read chan Message
 
 	Clients      map[*Client]bool
 	nextClientID int32
@@ -27,6 +28,8 @@ type Client struct {
 
 	ID    int32
 	State ClientState
+
+	Send chan []byte
 }
 
 type ClientState int
@@ -45,18 +48,18 @@ func main() {
 
 	fmt.Println("Server started on :9000")
 
-	s := &Server{
+	server := &Server{
 		Join:    make(chan *Client),
 		Leave:   make(chan *Client),
-		Msg:     make(chan Message),
 		Clients: make(map[*Client]bool),
+		Read:    make(chan Message),
 		Lobby: &Lobby{
 			Rooms:      make(map[int32]*Room),
 			nextRoomID: 0,
 		},
 	}
 
-	go s.Route()
+	go server.Route()
 
 	for {
 		conn, err := listener.Accept()
@@ -67,13 +70,16 @@ func main() {
 
 		client := &Client{
 			Conn:  conn,
-			ID:    s.generateClientID(),
+			ID:    server.generateClientID(),
 			State: ClientStateLobby,
+
+			Send: make(chan []byte, 32),
 		}
 
-		s.Join <- client
+		server.Join <- client
 
-		go s.handleClient(client)
+		go server.readLoop(client)
+		go client.WriteLoop()
 	}
 }
 
@@ -88,11 +94,10 @@ func (s *Server) Route() {
 			delete(s.Clients, client)
 			fmt.Printf("Client %d left\n", client.ID)
 
-		case msg := <-s.Msg:
+		case msg := <-s.Read:
 			switch msg.Client.State {
 			case ClientStateLobby:
-				s.LobbyManager(msg)
-			case ClientStateGame:
+				s.Lobby.LobbyManager(msg)
 			}
 		}
 	}
@@ -104,12 +109,7 @@ func (s *Server) generateClientID() int32 {
 	return atomic.AddInt32(&s.nextClientID, 1)
 }
 
-func (s *Server) handleClient(c *Client) {
-	defer func() {
-		c.Conn.Close()
-		s.Leave <- c
-	}()
-
+func (s *Server) readLoop(c *Client) {
 	buf := make([]byte, 1024)
 	for {
 		n, err := c.Conn.Read(buf)
@@ -119,11 +119,18 @@ func (s *Server) handleClient(c *Client) {
 		}
 		data := make([]byte, n)
 		copy(data, buf[:n])
-		s.Msg <- Message{Client: c, Data: data}
+		s.Read <- Message{Client: c, Data: data}
 	}
 }
 
-func (c *Client) WritePacket(packet []byte) error {
-	_, err := c.Conn.Write(packet)
-	return err
+func (c *Client) WriteLoop() {
+	for packet := range c.Send {
+		_, err := c.Conn.Write(packet)
+		if err != nil {
+			fmt.Printf("Client %d write error: %v\n", c.ID, err)
+
+			c.Conn.Close()
+			return
+		}
+	}
 }

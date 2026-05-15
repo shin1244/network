@@ -1,7 +1,9 @@
 package network
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 )
@@ -14,7 +16,9 @@ type Client struct {
 }
 
 type Event struct {
-	Data []byte
+	Scene        byte
+	SceneCommand byte
+	Data         []byte
 }
 
 func NewClient(addr string) *Client {
@@ -73,28 +77,34 @@ func (c *Client) WritePacket(packet []byte) error {
 	return err
 }
 
-// [Scene] [SceneCommand] [data]
+// 기본적으로 [1 바이트] [1 바이트] [4 바이트] [? 바이트] 형태로 패킷이 전송됩니다.
+// [Scene] [SceneCommand] [DataLength] [Data...]
 func (c *Client) Readloop() {
-	buffer := make([]byte, 1024)
-
 	for {
-		n, err := c.readPacket(buffer)
+		// 1단계: 헤더 6bytes 무조건 확보
+		header := make([]byte, 6)
+		_, err := io.ReadFull(c.conn, header)
 		if err != nil {
 			c.Events <- Event{Data: nil}
 			return
 		}
 
-		data := make([]byte, n)
-		copy(data, buffer[:n])
+		scene := header[0]
+		sceneCommand := header[1]
+		dataLength := binary.BigEndian.Uint32(header[2:6])
 
-		c.Events <- Event{Data: data}
+		// 2단계: Data 부분 확보
+		data := make([]byte, dataLength)
+		_, err = io.ReadFull(c.conn, data)
+		if err != nil {
+			c.Events <- Event{Data: nil}
+			return
+		}
+
+		c.Events <- Event{
+			Data:         data,
+			Scene:        scene,
+			SceneCommand: sceneCommand,
+		}
 	}
-}
-
-func (c *Client) readPacket(buffer []byte) (int, error) {
-	if c.conn == nil {
-		return 0, fmt.Errorf("network client is not connected")
-	}
-
-	return c.conn.Read(buffer)
 }

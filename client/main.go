@@ -51,8 +51,10 @@ func NewSceneManager() *SceneManager {
 	}
 	l := lobby.NewLobby(client)
 	l.OnChangeScene = func(scene []byte) {
-		if scene[1] == 1 {
+		if scene[0] == 1 {
 			log.Println("Switching to game scene (not implemented)")
+		} else {
+			log.Printf("Unknown scene command: %d", scene[1])
 		}
 	}
 

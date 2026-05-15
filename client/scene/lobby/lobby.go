@@ -168,17 +168,19 @@ func (l *Lobby) sendJoinRoom(roomID int32) error {
 }
 
 func (l *Lobby) handleRoomList(data []byte) {
-	roomCount := int(data[2])
+	roomCount := int(data[0])
+	offset := 1
 	rooms := make([]Room, roomCount)
-
-	offset := 3
 	for i := 0; i < roomCount; i++ {
 		roomID := int(binary.BigEndian.Uint32(data[offset : offset+4]))
 		offset += 4
-		roomNameLen := int(data[offset])
+
+		nameLen := int(data[offset])
 		offset++
-		roomName := string(data[offset : offset+roomNameLen])
-		offset += roomNameLen
+
+		roomName := string(data[offset : offset+nameLen])
+		offset += nameLen
+
 		playerCnt := int(data[offset])
 		offset++
 
@@ -193,14 +195,13 @@ func (l *Lobby) handleRoomList(data []byte) {
 
 func (l *Lobby) HandleServerEvent() {
 	for event := range l.Client.Events {
-		fmt.Printf("server event received: %v\n", event)
 		if event.Data == nil {
 			log.Println("server connection closed")
 			return
 		}
 
-		scene := event.Data[0]
-		cmd := event.Data[1]
+		scene := event.Scene
+		cmd := event.SceneCommand
 
 		if scene != byte(0) {
 			return
@@ -210,6 +211,7 @@ func (l *Lobby) HandleServerEvent() {
 		case byte(LobbyRefreshRooms):
 			l.handleRoomList(event.Data)
 		case byte(LobbyJoinRoom):
+			fmt.Println(event.Data)
 			l.OnChangeScene(event.Data)
 		}
 	}
