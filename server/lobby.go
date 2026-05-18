@@ -12,6 +12,7 @@ const (
 	LobbyCreateRoom LobbyCommand = iota
 	LobbyJoinRoom
 	LobbyRefreshRooms
+	JoinGame
 )
 
 type Room struct {
@@ -69,9 +70,8 @@ func (l *Lobby) JoinRoom(client *Client, roomID int32) {
 	header[0] = byte(ClientStateLobby)
 	header[1] = byte(LobbyJoinRoom)
 
-	payload := make([]byte, 5)
-	payload[0] = byte(LobbyJoinRoom)
-	binary.BigEndian.PutUint32(payload[1:5], uint32(roomID))
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload[1:4], uint32(roomID))
 
 	binary.BigEndian.PutUint32(header[2:6], uint32(len(payload)))
 

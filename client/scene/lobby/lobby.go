@@ -35,9 +35,9 @@ type Lobby struct {
 
 	CreateDialog *CreateRoomDialog
 
-	Client *network.Client
+	sendPacket func([]byte) error
 
-	OnChangeScene func(data []byte)
+	OnChangeScene func(sceneID int, data []byte)
 }
 
 type Room struct {
@@ -46,15 +46,16 @@ type Room struct {
 	PlayerCnt int
 }
 
-func NewLobby(client *network.Client) *Lobby {
+func JoinLobby(sendPacket func([]byte) error, onChangeScene func(sceneID int, data []byte)) *Lobby {
 	l := &Lobby{
-		JoinBtnIndex: -1,
-		Page:         0,
-		RefreshBtn:   NewButton(50, 400, 120, 40, "Refresh"),
-		CreateBtn:    NewButton(470, 400, 120, 40, "Create Room"),
-		PrevBtn:      NewButton(220, 400, 80, 40, "<"),
-		NextBtn:      NewButton(320, 400, 80, 40, ">"),
-		Client:       client,
+		JoinBtnIndex:  -1,
+		Page:          0,
+		RefreshBtn:    NewButton(50, 400, 120, 40, "Refresh"),
+		CreateBtn:     NewButton(470, 400, 120, 40, "Create Room"),
+		PrevBtn:       NewButton(220, 400, 80, 40, "<"),
+		NextBtn:       NewButton(320, 400, 80, 40, ">"),
+		sendPacket:    sendPacket,
+		OnChangeScene: onChangeScene,
 	}
 
 	l.CreateDialog = NewCreateRoomDialog(func(title string) error {
@@ -64,8 +65,6 @@ func NewLobby(client *network.Client) *Lobby {
 	if err := l.sendRefreshRooms(); err != nil {
 		log.Printf("failed to refresh rooms: %v", err)
 	}
-
-	go l.HandleServerEvent()
 
 	return l
 }
@@ -159,7 +158,7 @@ func (l *Lobby) sendRefreshRooms() error {
 		nil,
 	)
 
-	return l.Client.WritePacket(packet)
+	return l.sendPacket(packet)
 }
 
 // [Scene] [Command] [nameLenght] [name]
@@ -182,7 +181,7 @@ func (l *Lobby) sendCreateRoom(name string) error {
 		payload,
 	)
 
-	return l.Client.WritePacket(packet)
+	return l.sendPacket(packet)
 }
 
 // [Scene] [Command] [length] [roomID]
@@ -197,7 +196,7 @@ func (l *Lobby) sendJoinRoom(roomID int32) error {
 		payload,
 	)
 
-	return l.Client.WritePacket(packet)
+	return l.sendPacket(packet)
 }
 
 func (l *Lobby) handleRoomList(data []byte) {
@@ -226,26 +225,19 @@ func (l *Lobby) handleRoomList(data []byte) {
 	l.Rooms = rooms
 }
 
-func (l *Lobby) HandleServerEvent() {
-	for event := range l.Client.Events {
-		if event.Data == nil {
-			log.Println("server connection closed")
-			return
-		}
+func (l *Lobby) HandleServerEvent(event network.Event) {
+	scene := event.Scene
+	cmd := event.SceneCommand
 
-		scene := event.Scene
-		cmd := event.SceneCommand
+	if scene != byte(0) {
+		return
+	}
 
-		if scene != byte(0) {
-			continue
-		}
-
-		switch cmd {
-		case byte(LobbyRefreshRooms):
-			l.handleRoomList(event.Data)
-		case byte(LobbyJoinRoom):
-			fmt.Println(event.Data)
-			l.OnChangeScene(event.Data)
-		}
+	switch cmd {
+	case byte(LobbyRefreshRooms):
+		l.handleRoomList(event.Data)
+	case byte(LobbyJoinRoom):
+		fmt.Println(event.Data)
+		l.OnChangeScene(1, event.Data)
 	}
 }

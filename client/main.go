@@ -16,6 +16,7 @@ type SceneManager struct {
 }
 
 func (g *SceneManager) Update() error {
+	g.handleServerEvents()
 	return g.current.Update()
 }
 
@@ -37,7 +38,9 @@ func main() {
 	ebiten.SetWindowTitle("P2P Pong - Lobby")
 
 	sm := NewSceneManager()
-	go sm.client.Readloop()
+	if sm.client.IsConnected() {
+		go sm.client.Readloop()
+	}
 
 	if err := ebiten.RunGame(sm); err != nil {
 		log.Fatal(err)
@@ -49,17 +52,45 @@ func NewSceneManager() *SceneManager {
 	if err := client.Connect(); err != nil {
 		log.Printf("failed to connect to server: %v", err)
 	}
-	l := lobby.NewLobby(client)
-	l.OnChangeScene = func(scene []byte) {
-		if scene[0] == 1 {
-			log.Println("Switching to game scene (not implemented)")
-		} else {
-			log.Printf("Unknown scene command: %d", scene[1])
-		}
+
+	gameScene := &SceneManager{
+		client: client,
 	}
 
-	return &SceneManager{
-		current: l,
-		client:  client,
+	l := lobby.JoinLobby(client.WritePacket, gameScene.ChangeScene)
+
+	gameScene.current = l
+	return gameScene
+}
+
+type serverEventHandler interface {
+	HandleServerEvent(network.Event)
+}
+
+func (g *SceneManager) handleServerEvents() {
+	handler, ok := g.current.(serverEventHandler) // server event handler가 현재 씬에서 구현되어 있는지 확인
+	if !ok {
+		return
+	}
+
+	for {
+		select {
+		case event := <-g.client.Events:
+			if event.Data == nil {
+				log.Println("server connection closed")
+				return
+			}
+			handler.HandleServerEvent(event)
+		default:
+			return
+		}
+	}
+}
+
+func (g *SceneManager) ChangeScene(sceneID int, data []byte) {
+	if sceneID == 1 {
+		// g.current = game.NewGameScene(g.client.WritePacket, g.ChangeScene) // 게임 씬으로 전환
+	} else {
+		log.Printf("Unknown scene command: %d", sceneID)
 	}
 }

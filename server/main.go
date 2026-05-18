@@ -17,6 +17,8 @@ type Server struct {
 	Clients      map[*Client]bool
 	nextClientID int32
 
+	UDPConn *net.UDPConn
+
 	Lobby *Lobby
 }
 
@@ -65,6 +67,21 @@ func main() {
 
 	go server.Route()
 
+	addr, err := net.ResolveUDPAddr("udp", ":5555")
+	if err != nil {
+		fmt.Printf("Failed to resolve UDP address: %v\n", err)
+		return
+	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		fmt.Printf("Failed to listen on UDP: %v\n", err)
+		return
+	}
+	defer conn.Close()
+
+	server.UDPConn = conn
+	go server.udpReadLoop()
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -81,6 +98,18 @@ func main() {
 		}
 
 		server.Join <- client
+		server.Clients[client] = true
+
+		header := make([]byte, 6)
+		header[0] = byte(ClientStateLobby)
+		header[1] = byte(JoinGame)
+
+		payload := make([]byte, 4)
+		binary.BigEndian.PutUint32(payload[1:4], uint32(client.ID))
+
+		binary.BigEndian.PutUint32(header[2:6], uint32(len(payload)))
+
+		client.Send <- append(header, payload...)
 
 		go server.readLoop(client)
 		go client.WriteLoop()
@@ -115,9 +144,9 @@ func (s *Server) generateClientID() int32 {
 
 func (s *Server) readLoop(c *Client) {
 	for {
-		header := make([]byte, 6)
+		var header [6]byte
 
-		_, err := io.ReadFull(c.Conn, header)
+		_, err := io.ReadFull(c.Conn, header[:]) // 성능 최적화를 위해 고정 크기의 배열 사용
 		if err != nil {
 			fmt.Printf("Client %d disconnected\n", c.ID)
 			return
@@ -158,5 +187,24 @@ func (c *Client) WriteLoop() {
 			c.Conn.Close()
 			return
 		}
+	}
+}
+
+func (s *Server) udpReadLoop() {
+	buf := make([]byte, 1024)
+	for {
+		n, addr, err := s.UDPConn.ReadFromUDP(buf)
+		if err != nil {
+			fmt.Printf("UDP read error: %v\n", err)
+			return
+		}
+
+		msg := buf[:n]
+		scene := msg[0]
+		command := msg[1]
+
+		payload := msg[6:]
+
+		fmt.Printf("Received UDP message from %s: Scene=%d, Command=%d, Payload=%v\n", addr, scene, command, payload)
 	}
 }
