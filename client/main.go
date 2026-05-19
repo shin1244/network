@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/binary"
+	"fmt"
 	"log"
 
 	"pong/network"
+	"pong/scene/game"
 	"pong/scene/lobby"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -13,6 +16,8 @@ type SceneManager struct {
 	current ebiten.Game
 
 	client *network.Client
+
+	clientID int32
 }
 
 func (g *SceneManager) Update() error {
@@ -53,14 +58,14 @@ func NewSceneManager() *SceneManager {
 		log.Printf("failed to connect to server: %v", err)
 	}
 
-	gameScene := &SceneManager{
+	m := &SceneManager{
 		client: client,
 	}
 
-	l := lobby.JoinLobby(client.WritePacket, gameScene.ChangeScene)
+	l := lobby.JoinLobby(client.WritePacket, m.ChangeScene)
 
-	gameScene.current = l
-	return gameScene
+	m.current = l
+	return m
 }
 
 type serverEventHandler interface {
@@ -68,11 +73,6 @@ type serverEventHandler interface {
 }
 
 func (g *SceneManager) handleServerEvents() {
-	handler, ok := g.current.(serverEventHandler) // server event handler가 현재 씬에서 구현되어 있는지 확인
-	if !ok {
-		return
-	}
-
 	for {
 		select {
 		case event := <-g.client.Events:
@@ -80,7 +80,16 @@ func (g *SceneManager) handleServerEvents() {
 				log.Println("server connection closed")
 				return
 			}
-			handler.HandleServerEvent(event)
+
+			if g.handleGlobalServerEvent(event) {
+				continue
+			}
+
+			handler, ok := g.current.(serverEventHandler)
+			if ok {
+				handler.HandleServerEvent(event)
+			}
+
 		default:
 			return
 		}
@@ -89,8 +98,24 @@ func (g *SceneManager) handleServerEvents() {
 
 func (g *SceneManager) ChangeScene(sceneID int, data []byte) {
 	if sceneID == 1 {
-		// g.current = game.NewGameScene(g.client.WritePacket, g.ChangeScene) // 게임 씬으로 전환
+		g.current = game.NewGameScene(g.client.WritePacket, g.ChangeScene, g.clientID, data) // 게임 씬으로 전환
 	} else {
 		log.Printf("Unknown scene command: %d", sceneID)
 	}
+}
+
+// 서버에 처음 접속했을 때 클라이언트 ID를 받는 이벤트를 처리하는 함수
+func (g *SceneManager) handleGlobalServerEvent(event network.Event) bool {
+	if event.Scene == 0 && event.SceneCommand == byte(3) {
+		if len(event.Data) < 4 {
+			log.Printf("invalid client id payload: %v", event.Data)
+			return true
+		}
+
+		g.clientID = int32(binary.BigEndian.Uint32(event.Data))
+		fmt.Printf("Received client ID: %d\n", g.clientID)
+		return true
+	}
+
+	return false
 }

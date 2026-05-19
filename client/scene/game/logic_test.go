@@ -1,15 +1,18 @@
 package game
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestStateStepIsDeterministic(t *testing.T) {
-	first := NewState()
-	second := NewState()
+	first := NewState(Player1)
+	second := NewState(Player1)
 	inputs := []Input{
-		{Left: AxisUp, Right: AxisDown},
-		{Left: AxisUp, Right: AxisNeutral},
-		{Left: AxisNeutral, Right: AxisDown},
-		{Left: AxisDown, Right: AxisUp},
+		{Player1: AxisUp, Player2: AxisDown},
+		{Player1: AxisUp, Player2: AxisNeutral},
+		{Player1: AxisNeutral, Player2: AxisDown},
+		{Player1: AxisDown, Player2: AxisUp},
 	}
 
 	for i := 0; i < 240; i++ {
@@ -18,16 +21,16 @@ func TestStateStepIsDeterministic(t *testing.T) {
 		second.Step(input)
 	}
 
-	if *first != *second {
+	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("same inputs produced different states: first=%+v second=%+v", first, second)
 	}
 }
 
 func TestPaddlesStayInsideScreen(t *testing.T) {
-	state := NewState()
+	state := NewState(Player1)
 
 	for i := 0; i < 200; i++ {
-		state.Step(Input{Left: AxisUp, Right: AxisDown})
+		state.Step(Input{Player1: AxisUp, Player2: AxisDown})
 	}
 
 	if state.LeftPaddle.Y != 0 {
@@ -39,7 +42,7 @@ func TestPaddlesStayInsideScreen(t *testing.T) {
 }
 
 func TestScoreResetsBall(t *testing.T) {
-	state := NewState()
+	state := NewState(Player1)
 	state.Ball.X = -BallSize - 1
 	state.Ball.VX = -BallDX
 

@@ -1,5 +1,7 @@
 package game
 
+import "log"
+
 const (
 	ScreenWidth  = 640
 	ScreenHeight = 480
@@ -20,11 +22,14 @@ const (
 	AxisNeutral Axis = 0
 	AxisUp      Axis = -1
 	AxisDown    Axis = 1
+
+	Player1 uint8 = 1
+	Player2 uint8 = 2
 )
 
 type Input struct {
-	Left  Axis
-	Right Axis
+	Player1 Axis
+	Player2 Axis
 }
 
 type Rect struct {
@@ -45,10 +50,13 @@ type State struct {
 	Ball        Ball
 	LeftScore   int
 	RightScore  int
-	Tick        uint64
+	Tick        uint32
+
+	CommandQueue map[uint32]map[uint8]Axis
+	Player       uint8
 }
 
-func NewState() *State {
+func NewState(player uint8) *State {
 	s := &State{
 		LeftPaddle: Rect{
 			X: PaddleMargin,
@@ -58,7 +66,19 @@ func NewState() *State {
 			X: ScreenWidth - PaddleMargin - PaddleWidth,
 			Y: (ScreenHeight - PaddleHeight) / 2,
 		},
+		Player:       player,
+		CommandQueue: make(map[uint32]map[uint8]Axis),
 	}
+
+	for tick := uint32(0); tick < InputDelay; tick++ {
+		s.CommandQueue[tick] = map[uint8]Axis{
+			Player1: AxisNeutral,
+			Player2: AxisNeutral,
+		}
+	}
+
+	log.Printf("Initial CommandQueue: %v", s.CommandQueue)
+
 	s.resetBall(1)
 	return s
 }
@@ -66,8 +86,8 @@ func NewState() *State {
 func (s *State) Step(input Input) {
 	s.Tick++
 
-	s.movePaddle(&s.LeftPaddle, input.Left)
-	s.movePaddle(&s.RightPaddle, input.Right)
+	s.movePaddle(&s.LeftPaddle, input.Player1)
+	s.movePaddle(&s.RightPaddle, input.Player2)
 	s.moveBall()
 }
 

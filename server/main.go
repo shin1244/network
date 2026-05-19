@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sync/atomic"
 )
@@ -15,6 +16,7 @@ type Server struct {
 	Read chan Message
 
 	Clients      map[*Client]bool
+	ClientByID   map[int32]*Client
 	nextClientID int32
 
 	UDPConn *net.UDPConn
@@ -34,6 +36,8 @@ type Client struct {
 
 	ID    int32
 	State ClientState
+
+	UDPAddr *net.UDPAddr
 
 	Send chan []byte
 }
@@ -55,12 +59,14 @@ func main() {
 	fmt.Println("Server started on :9000")
 
 	server := &Server{
-		Join:    make(chan *Client),
-		Leave:   make(chan *Client),
-		Clients: make(map[*Client]bool),
-		Read:    make(chan Message),
+		Join:       make(chan *Client),
+		Leave:      make(chan *Client),
+		Clients:    make(map[*Client]bool),
+		ClientByID: make(map[int32]*Client),
+		Read:       make(chan Message),
 		Lobby: &Lobby{
 			Rooms:      make(map[int32]*Room),
+			ClientRoom: make(map[int32]*Room),
 			nextRoomID: 0,
 		},
 	}
@@ -99,13 +105,14 @@ func main() {
 
 		server.Join <- client
 		server.Clients[client] = true
+		server.ClientByID[client.ID] = client
 
 		header := make([]byte, 6)
 		header[0] = byte(ClientStateLobby)
 		header[1] = byte(JoinGame)
 
 		payload := make([]byte, 4)
-		binary.BigEndian.PutUint32(payload[1:4], uint32(client.ID))
+		binary.BigEndian.PutUint32(payload, uint32(client.ID))
 
 		binary.BigEndian.PutUint32(header[2:6], uint32(len(payload)))
 
@@ -121,16 +128,22 @@ func (s *Server) Route() {
 		select {
 		case client := <-s.Join:
 			s.Clients[client] = true
+			s.ClientByID[client.ID] = client
 			fmt.Printf("Client %d joined\n", client.ID)
 
 		case client := <-s.Leave:
 			delete(s.Clients, client)
+			delete(s.ClientByID, client.ID)
 			fmt.Printf("Client %d left\n", client.ID)
 
 		case msg := <-s.Read:
 			switch msg.Client.State {
 			case ClientStateLobby:
-				s.Lobby.LobbyManager(msg)
+				room, ready := s.Lobby.LobbyManager(msg)
+				if ready {
+					log.Printf("Starting game in room %d\n", room.ID)
+					s.TryStartHolePunching(msg.Client)
+				}
 			}
 		}
 	}
@@ -200,11 +213,67 @@ func (s *Server) udpReadLoop() {
 		}
 
 		msg := buf[:n]
+		log.Printf("Received UDP message from %v: %v\n", addr, msg)
 		scene := msg[0]
 		command := msg[1]
 
 		payload := msg[6:]
 
-		fmt.Printf("Received UDP message from %s: Scene=%d, Command=%d, Payload=%v\n", addr, scene, command, payload)
+		if scene == 1 && command == 2 {
+			log.Printf("Received hole punching request from %v\n", addr)
+			log.Printf("Payload: %v\n", payload)
+			clientID := int32(binary.BigEndian.Uint32(payload))
+
+			client, ok := s.ClientByID[clientID]
+			if !ok {
+				fmt.Printf("Unknown client ID %d from %v\n", clientID, addr)
+				continue
+			}
+			client.UDPAddr = addr
+			s.TryStartHolePunching(client)
+		}
 	}
+}
+
+func MakePacket(scene byte, command byte, payload []byte) []byte {
+	header := make([]byte, 6)
+
+	header[0] = scene
+	header[1] = command
+
+	binary.BigEndian.PutUint32(
+		header[2:6],
+		uint32(len(payload)),
+	)
+
+	return append(header, payload...)
+}
+
+func (s *Server) TryStartHolePunching(client *Client) {
+	if client.UDPAddr == nil {
+		log.Printf("Client %d has not established UDP connection yet", client.ID)
+		return
+	}
+
+	room := s.Lobby.ClientRoom[client.ID]
+	if room == nil {
+		log.Printf("Client %d is not in any room", client.ID)
+		return
+	}
+
+	if !room.IsReadyForPunching() {
+		log.Printf("Room %d is not ready for hole punching", room.ID)
+		return
+	}
+
+	s.StartHolePunching(room)
+}
+
+func (r *Room) IsReadyForPunching() bool {
+	if len(r.Players) != 2 {
+		return false
+	}
+
+	return r.Players[0].UDPAddr != nil &&
+		r.Players[1].UDPAddr != nil
 }

@@ -22,12 +22,15 @@ type Room struct {
 }
 
 type Lobby struct {
-	Rooms      map[int32]*Room
+	Rooms      map[int32]*Room // 방 ID를 키로 하는 방 목록
 	nextRoomID int32
+
+	ClientRoom map[int32]*Room // 클라이언트 ID를 키로 하는 클라이언트-방 매핑
 }
 
 // Lobby 함수는 클라이언트로부터 받은 데이터를 처리하여 로비 관련 명령을 수행합니다.
-func (l *Lobby) LobbyManager(msg Message) {
+// 05.19 수정 사항 ) JoinRoom의 네트워크 송신 부분 분리 LobbyManager 함수로 이동
+func (l *Lobby) LobbyManager(msg Message) (*Room, bool) {
 	switch LobbyCommand(msg.Command) {
 	case LobbyCreateRoom:
 		roomName := string(msg.Payload)
@@ -35,12 +38,40 @@ func (l *Lobby) LobbyManager(msg Message) {
 		fmt.Printf("Room '%s' created\n", roomName)
 	case LobbyJoinRoom:
 		roomID := int32(binary.BigEndian.Uint32(msg.Payload))
-		l.JoinRoom(msg.Client, roomID)
+
+		room, err := l.JoinRoom(msg.Client, roomID)
+		if err != nil {
+			fmt.Printf("Error joining room %d: %v\n", roomID, err)
+			return nil, false
+		}
+
 		fmt.Printf("Room %d joined\n", roomID)
+
+		player := len(room.Players)
+		payload := make([]byte, 4)
+		binary.BigEndian.PutUint32(payload, uint32(player))
+
+		packet := MakePacket(
+			byte(ClientStateLobby),
+			byte(LobbyJoinRoom),
+			payload,
+		)
+
+		msg.Client.Send <- packet
+
+		return room, room.IsReady()
+
 	case LobbyRefreshRooms:
-		l.refreshRooms(msg.Client)
-		fmt.Printf("Client %d requested room list refresh\n", msg.Client.ID)
+		payload := l.RoomListPayload()
+
+		packet := MakePacket(
+			byte(ClientStateLobby),
+			byte(LobbyRefreshRooms),
+			payload,
+		)
+		msg.Client.Send <- packet
 	}
+	return nil, false
 }
 
 // generateRoomID는 새로운 방 ID를 생성합니다.
@@ -49,40 +80,37 @@ func (l *Lobby) generateRoomID() int32 {
 	return atomic.AddInt32(&l.nextRoomID, 1)
 }
 
-func (l *Lobby) JoinRoom(client *Client, roomID int32) {
+func (l *Lobby) JoinRoom(client *Client, roomID int32) (*Room, error) {
 	room, exists := l.Rooms[roomID]
 	if !exists {
-		fmt.Printf("Room %d does not exist\n", roomID)
-		return
+		return nil, fmt.Errorf("room %d does not exist", roomID)
 	}
 
-	if len(room.Players) >= 2 {
-		fmt.Printf("Room %d is full\n", roomID)
-		return
+	if !room.CanJoin(client) {
+		return nil, fmt.Errorf("room %d is full", roomID)
 	}
 
 	room.Players = append(room.Players, client)
+	l.ClientRoom[client.ID] = room
 	client.State = ClientStateGame
 
-	fmt.Printf("Client %d joined Room %d\n", client.ID, roomID)
+	return room, nil
+}
 
-	header := make([]byte, 6)
-	header[0] = byte(ClientStateLobby)
-	header[1] = byte(LobbyJoinRoom)
+func (r *Room) IsFull() bool {
+	return len(r.Players) >= 2
+}
 
-	payload := make([]byte, 4)
-	binary.BigEndian.PutUint32(payload[1:4], uint32(roomID))
+func (r *Room) CanJoin(client *Client) bool {
+	return !r.IsFull()
+}
 
-	binary.BigEndian.PutUint32(header[2:6], uint32(len(payload)))
-
-	packet := append(header, payload...)
-
-	client.Send <- packet
+func (r *Room) IsReady() bool {
+	return len(r.Players) == 2
 }
 
 // header [Scene] [SceneCommand] [DataLength] payload [[roomID][nameLen][roomName][roomPlayerCount]...]
-func (l *Lobby) refreshRooms(client *Client) bool {
-	// payload 생성
+func (l *Lobby) RoomListPayload() []byte {
 	payload := []byte{}
 
 	payload = append(payload, byte(len(l.Rooms)))
@@ -98,20 +126,7 @@ func (l *Lobby) refreshRooms(client *Client) bool {
 		payload = append(payload, byte(len(room.Players)))
 	}
 
-	// header 생성
-	header := make([]byte, 6)
-
-	header[0] = byte(ClientStateLobby)
-	header[1] = byte(LobbyRefreshRooms)
-
-	binary.BigEndian.PutUint32(header[2:6], uint32(len(payload)))
-
-	// 최종 packet
-	packet := append(header, payload...)
-
-	client.Send <- packet
-
-	return true
+	return payload
 }
 
 func (l *Lobby) createRoom(roomName string) {
