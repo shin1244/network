@@ -34,8 +34,12 @@ func (l *Lobby) LobbyManager(msg Message) (*Room, bool) {
 	switch LobbyCommand(msg.Command) {
 	case LobbyCreateRoom:
 		roomName := string(msg.Payload)
-		l.createRoom(roomName)
-		fmt.Printf("Room '%s' created\n", roomName)
+		room := l.createRoom(roomName)
+		room, err := l.JoinRoom(msg.Client, room.ID)
+		if err != nil {
+			fmt.Printf("Error joining newly created room %d: %v\n", room.ID, err)
+			return nil, false
+		}
 	case LobbyJoinRoom:
 		roomID := int32(binary.BigEndian.Uint32(msg.Payload))
 
@@ -129,13 +133,14 @@ func (l *Lobby) RoomListPayload() []byte {
 	return payload
 }
 
-func (l *Lobby) createRoom(roomName string) {
+func (l *Lobby) createRoom(roomName string) *Room {
 	roomID := l.generateRoomID()
-	l.Rooms[roomID] = &Room{
+	room := &Room{
 		ID:      roomID,
 		Name:    roomName,
 		Players: []*Client{},
 	}
-
-	fmt.Printf("Room %d created\n", roomID)
+	l.Rooms[roomID] = room
+	fmt.Printf("Room %d ('%s') created successfully\n", roomID, roomName)
+	return room
 }

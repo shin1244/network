@@ -104,8 +104,6 @@ func main() {
 		}
 
 		server.Join <- client
-		server.Clients[client] = true
-		server.ClientByID[client.ID] = client
 
 		header := make([]byte, 6)
 		header[0] = byte(ClientStateLobby)
