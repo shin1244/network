@@ -42,12 +42,12 @@ func main() {
 	ebiten.SetWindowSize(ScreenWidth, ScreenHeight)
 	ebiten.SetWindowTitle("P2P Pong - Lobby")
 
-	sm := NewSceneManager()
-	if sm.client.IsConnected() {
-		go sm.client.Readloop()
+	sceneManager := NewSceneManager()
+	if sceneManager.client.IsConnected() {
+		go sceneManager.client.Readloop()
 	}
 
-	if err := ebiten.RunGame(sm); err != nil {
+	if err := ebiten.RunGame(sceneManager); err != nil {
 		log.Fatal(err)
 	}
 }

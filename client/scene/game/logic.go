@@ -52,8 +52,15 @@ type State struct {
 	RightScore  int
 	Tick        uint32
 
-	CommandQueue map[uint32]map[uint8]Axis
+	CommandQueue map[uint32]*FrameInput
 	Player       uint8
+}
+
+type FrameInput struct {
+	P1Input Axis
+	P2Input Axis
+	P1Ready bool
+	P2Ready bool
 }
 
 func NewState(player uint8) *State {
@@ -67,13 +74,15 @@ func NewState(player uint8) *State {
 			Y: (ScreenHeight - PaddleHeight) / 2,
 		},
 		Player:       player,
-		CommandQueue: make(map[uint32]map[uint8]Axis),
+		CommandQueue: make(map[uint32]*FrameInput),
 	}
 
 	for tick := uint32(0); tick < InputDelay; tick++ {
-		s.CommandQueue[tick] = map[uint8]Axis{
-			Player1: AxisNeutral,
-			Player2: AxisNeutral,
+		s.CommandQueue[tick] = &FrameInput{
+			P1Input: AxisNeutral,
+			P2Input: AxisNeutral,
+			P1Ready: true,
+			P2Ready: true,
 		}
 	}
 
@@ -174,4 +183,20 @@ func abs(value int) int {
 		return -value
 	}
 	return value
+}
+
+func (s *State) PushCommand(tick uint32, playerID uint8, input Axis) {
+	if s.CommandQueue[tick] == nil {
+		s.CommandQueue[tick] = &FrameInput{}
+	}
+	frame := s.CommandQueue[tick]
+
+	switch playerID {
+	case Player1:
+		frame.P1Input = input
+		frame.P1Ready = true
+	case Player2:
+		frame.P2Input = input
+		frame.P2Ready = true
+	}
 }

@@ -130,6 +130,8 @@ func (s *Server) Route() {
 			fmt.Printf("Client %d joined\n", client.ID)
 
 		case client := <-s.Leave:
+			s.Lobby.LeaveRoom(client)
+
 			delete(s.Clients, client)
 			delete(s.ClientByID, client.ID)
 			fmt.Printf("Client %d left\n", client.ID)

@@ -6,15 +6,25 @@ import (
 )
 
 const (
-	StartHolePunching byte = iota
+	SceneGame         byte = 1
+	CmdStartHolePunch byte = 0
 )
 
 func (s *Server) StartHolePunching(room *Room) {
+	if len(room.Players) < 2 {
+		return
+	}
+
 	p1 := room.Players[0]
 	p2 := room.Players[1]
 
-	p1.Send <- MakePacket(1, 0, SerializeUDPAddr(p2.UDPAddr))
-	p2.Send <- MakePacket(1, 0, SerializeUDPAddr(p1.UDPAddr))
+	// P1에게 P2의 공인 UDP 주소를 전송
+	p1.Send <- MakePacket(SceneGame, CmdStartHolePunch, SerializeUDPAddr(p2.UDPAddr))
+	// P2에게 P1의 공인 UDP 주소를 전송
+	p2.Send <- MakePacket(SceneGame, CmdStartHolePunch, SerializeUDPAddr(p1.UDPAddr))
+
+	p1.State = ClientStateGame
+	p2.State = ClientStateGame
 }
 
 func SerializeUDPAddr(addr *net.UDPAddr) []byte {

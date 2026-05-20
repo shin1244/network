@@ -35,11 +35,28 @@ func (l *Lobby) LobbyManager(msg Message) (*Room, bool) {
 	case LobbyCreateRoom:
 		roomName := string(msg.Payload)
 		room := l.createRoom(roomName)
+
 		room, err := l.JoinRoom(msg.Client, room.ID)
 		if err != nil {
-			fmt.Printf("Error joining newly created room %d: %v\n", room.ID, err)
+			fmt.Printf("Error joining room %d: %v\n", room.ID, err)
 			return nil, false
 		}
+
+		fmt.Printf("Room %d joined\n", room.ID)
+
+		player := len(room.Players)
+		payload := make([]byte, 4)
+		binary.BigEndian.PutUint32(payload, uint32(player))
+
+		packet := MakePacket(
+			byte(ClientStateLobby),
+			byte(LobbyJoinRoom),
+			payload,
+		)
+
+		msg.Client.Send <- packet
+
+		return room, room.IsReady()
 	case LobbyJoinRoom:
 		roomID := int32(binary.BigEndian.Uint32(msg.Payload))
 
@@ -64,7 +81,6 @@ func (l *Lobby) LobbyManager(msg Message) (*Room, bool) {
 		msg.Client.Send <- packet
 
 		return room, room.IsReady()
-
 	case LobbyRefreshRooms:
 		payload := l.RoomListPayload()
 
@@ -113,15 +129,13 @@ func (r *Room) IsReady() bool {
 	return len(r.Players) == 2
 }
 
-// header [Scene] [SceneCommand] [DataLength] payload [[roomID][nameLen][roomName][roomPlayerCount]...]
+// 패킷: [방 개수(4B)] + 갱신 루프 [방ID(4B)][이름길이(1B)][이름(...)][인원수(1B)]...
 func (l *Lobby) RoomListPayload() []byte {
-	payload := []byte{}
-
-	payload = append(payload, byte(len(l.Rooms)))
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload[0:4], uint32(len(l.Rooms)))
 
 	for _, room := range l.Rooms {
 		roomData := make([]byte, 5)
-
 		binary.BigEndian.PutUint32(roomData[0:4], uint32(room.ID))
 		roomData[4] = byte(len(room.Name))
 
@@ -143,4 +157,27 @@ func (l *Lobby) createRoom(roomName string) *Room {
 	l.Rooms[roomID] = room
 	fmt.Printf("Room %d ('%s') created successfully\n", roomID, roomName)
 	return room
+}
+
+func (l *Lobby) LeaveRoom(client *Client) {
+	room, exists := l.ClientRoom[client.ID]
+	if !exists {
+		return
+	}
+
+	// 방 플레이어 목록에서 제거
+	for i, p := range room.Players {
+		if p.ID == client.ID {
+			room.Players = append(room.Players[:i], room.Players[i+1:]...)
+			break
+		}
+	}
+	delete(l.ClientRoom, client.ID)
+	fmt.Printf("Client %d removed from Room %d\n", client.ID, room.ID)
+
+	// 방에 아무도 없으면 방 자체를 파괴
+	if len(room.Players) == 0 {
+		delete(l.Rooms, room.ID)
+		fmt.Printf("Room %d closed (No players left)\n", room.ID)
+	}
 }

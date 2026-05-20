@@ -1,8 +1,10 @@
 package game
 
 import (
+	"encoding/binary"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestStateStepIsDeterministic(t *testing.T) {
@@ -57,4 +59,110 @@ func TestScoreResetsBall(t *testing.T) {
 	if state.Ball.VX != -BallDX {
 		t.Fatalf("ball vx = %d, want %d", state.Ball.VX, -BallDX)
 	}
+}
+
+func TestUnackedInputIsResentWithoutAck(t *testing.T) {
+	transport := newFakeTransport()
+	session := NewNetplaySession(Player1, transport)
+
+	session.SendLocalInput(7, AxisUp)
+	if len(transport.sent) != 1 {
+		t.Fatalf("sent packet count = %d, want 1", len(transport.sent))
+	}
+
+	pending := session.unackedInputs[7]
+	pending.lastSentAt = time.Now().Add(-InputResendInterval)
+	session.unackedInputs[7] = pending
+	session.ResendUnackedInputs()
+
+	if len(transport.sent) != 2 {
+		t.Fatalf("sent packet count = %d, want 2", len(transport.sent))
+	}
+	if got := packetTick(transport.sent[1].payload); got != 7 {
+		t.Fatalf("resent tick = %d, want 7", got)
+	}
+}
+
+func TestAckedInputIsNotResent(t *testing.T) {
+	transport := newFakeTransport()
+	session := NewNetplaySession(Player1, transport)
+	state := NewState(Player1)
+
+	session.SendLocalInput(9, AxisDown)
+	transport.events <- PacketEvent{Command: UDPAck, Payload: tickPayload(9)}
+	session.ProcessIncoming(state)
+
+	if _, ok := session.unackedInputs[9]; ok {
+		t.Fatal("tick 9 remained queued after ack was processed")
+	}
+
+	session.ResendUnackedInputs()
+	if len(transport.sent) != 1 {
+		t.Fatalf("sent packet count = %d, want only original send", len(transport.sent))
+	}
+}
+
+func TestRemoteInputIsQueuedAndAcked(t *testing.T) {
+	transport := newFakeTransport()
+	session := NewNetplaySession(Player1, transport)
+	state := NewState(Player1)
+
+	payload := append(tickPayload(12), byte(int8(AxisDown)))
+	transport.events <- PacketEvent{Command: Player2, Payload: payload}
+	session.ProcessIncoming(state)
+
+	frame := state.CommandQueue[12]
+	if frame == nil || !frame.P2Ready || frame.P2Input != AxisDown {
+		t.Fatalf("remote input was not queued correctly: %+v", frame)
+	}
+	if len(transport.sent) != 1 {
+		t.Fatalf("sent packet count = %d, want ack", len(transport.sent))
+	}
+	if transport.sent[0].command != UDPAck {
+		t.Fatalf("sent command = %d, want UDPAck", transport.sent[0].command)
+	}
+}
+
+type sentPacket struct {
+	command byte
+	payload []byte
+}
+
+type fakeTransport struct {
+	ready  bool
+	events chan PacketEvent
+	sent   []sentPacket
+}
+
+func newFakeTransport() *fakeTransport {
+	return &fakeTransport{
+		ready:  true,
+		events: make(chan PacketEvent, 10),
+	}
+}
+
+func (f *fakeTransport) Send(command byte, payload []byte) error {
+	f.sent = append(f.sent, sentPacket{
+		command: command,
+		payload: append([]byte(nil), payload...),
+	})
+	return nil
+}
+
+func (f *fakeTransport) Events() <-chan PacketEvent {
+	return f.events
+}
+
+func (f *fakeTransport) IsReady() bool {
+	return f.ready
+}
+
+func tickPayload(tick uint32) []byte {
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload, tick)
+	return payload
+}
+
+func packetTick(payload []byte) uint32 {
+	return binary.BigEndian.Uint32(payload[0:4])
 }
