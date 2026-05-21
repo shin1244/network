@@ -97,10 +97,11 @@ func (g *SceneManager) handleServerEvents() {
 }
 
 func (g *SceneManager) ChangeScene(sceneID int, data []byte) {
-	if sceneID == 1 {
+	switch sceneID {
+	case 0:
+		g.current = lobby.JoinLobby(g.client.WritePacket, g.ChangeScene)
+	case 1:
 		g.current = game.NewGameScene(g.client.WritePacket, g.ChangeScene, g.clientID, data) // 게임 씬으로 전환
-	} else {
-		log.Printf("Unknown scene command: %d", sceneID)
 	}
 }
 

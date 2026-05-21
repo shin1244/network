@@ -54,6 +54,11 @@ func NewGameScene(sendPacket func([]byte) error, onChangeScene func(sceneID int,
 }
 
 func (g *GameScene) Update() error {
+	if g.state.Winner != 0 {
+		g.SendGameOverPacket()
+		g.OnChangeScene(0, nil)
+		return nil
+	}
 	if g.netplay != nil {
 		g.netplay.ProcessIncoming(g.state)
 	}
@@ -121,7 +126,6 @@ func (g *GameScene) HandleServerEvent(event network.Event) {
 		if g.transport != nil {
 			go g.transport.StartHolePunching(event.Data)
 		}
-	case byte(1):
 	}
 }
 
@@ -184,4 +188,30 @@ func (g *GameScene) simulateCurrentTick() {
 	state.Step(cmd)
 
 	delete(state.CommandQueue, currentTick)
+}
+
+type GameOverReport struct {
+	Winner       int32
+	LeftScore    byte
+	RightScore   byte
+	GameOverTick uint32
+}
+
+func (g *GameScene) SendGameOverPacket() {
+	report := GameOverReport{
+		Winner:       int32(g.state.Winner),
+		LeftScore:    byte(g.state.LeftScore),
+		RightScore:   byte(g.state.RightScore),
+		GameOverTick: g.state.GameOverTick,
+	}
+
+	payload := make([]byte, 16)
+	binary.BigEndian.PutUint32(payload[0:4], uint32(report.Winner))
+	payload[4] = report.LeftScore
+	payload[5] = report.RightScore
+	binary.BigEndian.PutUint32(payload[6:10], report.GameOverTick)
+
+	if err := g.sendPacket(network.MakePacket(1, byte(2), payload)); err != nil {
+		log.Printf("failed to send game over packet: %v", err)
+	}
 }

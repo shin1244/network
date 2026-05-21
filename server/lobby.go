@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"sync/atomic"
 )
 
@@ -19,6 +20,8 @@ type Room struct {
 	ID      int32
 	Name    string
 	Players []*Client
+
+	GameOverVotes map[int32]bool
 }
 
 type Lobby struct {
@@ -82,7 +85,9 @@ func (l *Lobby) LobbyManager(msg Message) (*Room, bool) {
 
 		return room, room.IsReady()
 	case LobbyRefreshRooms:
+		log.Printf("Received room list refresh request from Client %d\n", msg.Client.ID)
 		payload := l.RoomListPayload()
+		log.Printf("Room list payload: %v\n", payload)
 
 		packet := MakePacket(
 			byte(ClientStateLobby),
@@ -114,6 +119,8 @@ func (l *Lobby) JoinRoom(client *Client, roomID int32) (*Room, error) {
 	l.ClientRoom[client.ID] = room
 	client.State = ClientStateGame
 
+	room.GameOverVotes[client.ID] = false
+
 	return room, nil
 }
 
@@ -129,10 +136,10 @@ func (r *Room) IsReady() bool {
 	return len(r.Players) == 2
 }
 
-// 패킷: [방 개수(4B)] + 갱신 루프 [방ID(4B)][이름길이(1B)][이름(...)][인원수(1B)]...
+// 패킷: [방 개수(최대 255)] + 갱신 루프 [방ID(4B)][이름길이(1B)][이름(...)][인원수(1B)]...
 func (l *Lobby) RoomListPayload() []byte {
-	payload := make([]byte, 4)
-	binary.BigEndian.PutUint32(payload[0:4], uint32(len(l.Rooms)))
+	payload := make([]byte, 1)
+	payload[0] = byte(len(l.Rooms))
 
 	for _, room := range l.Rooms {
 		roomData := make([]byte, 5)
@@ -153,6 +160,8 @@ func (l *Lobby) createRoom(roomName string) *Room {
 		ID:      roomID,
 		Name:    roomName,
 		Players: []*Client{},
+
+		GameOverVotes: make(map[int32]bool),
 	}
 	l.Rooms[roomID] = room
 	fmt.Printf("Room %d ('%s') created successfully\n", roomID, roomName)
@@ -179,5 +188,32 @@ func (l *Lobby) LeaveRoom(client *Client) {
 	if len(room.Players) == 0 {
 		delete(l.Rooms, room.ID)
 		fmt.Printf("Room %d closed (No players left)\n", room.ID)
+	}
+}
+
+func (l *Lobby) HandleGameOver(client *Client, report GameOverReport) {
+	room, exists := l.ClientRoom[client.ID]
+	if !exists {
+		log.Printf("Client %d is not in a room, cannot handle game over report\n", client.ID)
+		return
+	}
+
+	room.GameOverVotes[client.ID] = true
+
+	allVoted := true
+	for _, voted := range room.GameOverVotes {
+		if !voted {
+			allVoted = false
+			break
+		}
+	}
+
+	log.Println(report)
+	if allVoted {
+		for _, p := range room.Players {
+			p.State = ClientStateLobby
+			delete(l.ClientRoom, p.ID)
+		}
+		delete(l.Rooms, room.ID)
 	}
 }

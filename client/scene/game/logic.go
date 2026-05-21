@@ -14,6 +14,8 @@ const (
 	BallSize = 10
 	BallDX   = 5
 	BallDY   = 3
+
+	WinningScore = 3
 )
 
 type Axis int
@@ -50,10 +52,13 @@ type State struct {
 	Ball        Ball
 	LeftScore   int
 	RightScore  int
+	Winner      uint8
 	Tick        uint32
 
 	CommandQueue map[uint32]*FrameInput
 	Player       uint8
+
+	GameOverTick uint32
 }
 
 type FrameInput struct {
@@ -129,10 +134,16 @@ func (s *State) moveBall() {
 
 	if s.Ball.X+BallSize < 0 {
 		s.RightScore++
-		s.resetBall(-1)
+		s.checkGameOver()
+		if s.Winner == 0 {
+			s.resetBall(-1)
+		}
 	} else if s.Ball.X > ScreenWidth {
 		s.LeftScore++
-		s.resetBall(1)
+		s.checkGameOver()
+		if s.Winner == 0 {
+			s.resetBall(1)
+		}
 	}
 }
 
@@ -198,5 +209,18 @@ func (s *State) PushCommand(tick uint32, playerID uint8, input Axis) {
 	case Player2:
 		frame.P2Input = input
 		frame.P2Ready = true
+	}
+}
+
+func (s *State) checkGameOver() {
+	if s.LeftScore >= WinningScore {
+		s.Winner = Player1
+		s.GameOverTick = s.Tick
+		return
+	}
+
+	if s.RightScore >= WinningScore {
+		s.Winner = Player2
+		s.GameOverTick = s.Tick
 	}
 }

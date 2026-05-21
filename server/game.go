@@ -10,6 +10,13 @@ const (
 	CmdStartHolePunch byte = 0
 )
 
+type GameOverReport struct {
+	Winner       int32
+	LeftScore    byte
+	RightScore   byte
+	GameOverTick uint32
+}
+
 func (s *Server) StartHolePunching(room *Room) {
 	if len(room.Players) < 2 {
 		return

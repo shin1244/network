@@ -144,6 +144,16 @@ func (s *Server) Route() {
 					log.Printf("Starting game in room %d\n", room.ID)
 					s.TryStartHolePunching(msg.Client)
 				}
+			case ClientStateGame:
+				if msg.Scene == 1 && msg.Command == 2 {
+					report := GameOverReport{
+						Winner:       int32(binary.BigEndian.Uint32(msg.Payload[0:4])),
+						LeftScore:    msg.Payload[4],
+						RightScore:   msg.Payload[5],
+						GameOverTick: binary.BigEndian.Uint32(msg.Payload[6:10]),
+					}
+					s.Lobby.HandleGameOver(msg.Client, report)
+				}
 			}
 		}
 	}
