@@ -102,6 +102,8 @@ func (g *SceneManager) ChangeScene(sceneID int, data []byte) {
 		g.current = lobby.JoinLobby(g.client.WritePacket, g.ChangeScene)
 	case 1:
 		g.current = game.NewGameScene(g.client.WritePacket, g.ChangeScene, g.clientID, data) // 게임 씬으로 전환
+	case 2:
+		g.current = game.NewReplayScene(nil)
 	}
 }
 

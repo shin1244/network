@@ -78,6 +78,7 @@ func (l *Lobby) drawLobby(screen *ebiten.Image) {
 
 	l.RefreshBtn.Draw(screen)
 	l.CreateBtn.Draw(screen)
+	l.ReplayBtn.Draw(screen)
 	l.PrevBtn.Draw(screen)
 	l.NextBtn.Draw(screen)
 	l.CreateDialog.Draw(screen)

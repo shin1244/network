@@ -29,6 +29,7 @@ type Lobby struct {
 	Page         int
 	RefreshBtn   *Button
 	CreateBtn    *Button
+	ReplayBtn    *Button
 	PrevBtn      *Button
 	NextBtn      *Button
 	JoinBtnIndex int
@@ -52,6 +53,7 @@ func JoinLobby(sendPacket func([]byte) error, onChangeScene func(sceneID int, da
 		Page:          0,
 		RefreshBtn:    NewButton(50, 400, 120, 40, "Refresh"),
 		CreateBtn:     NewButton(470, 400, 120, 40, "Create Room"),
+		ReplayBtn:     NewButton(470, 350, 120, 40, "Replay"),
 		PrevBtn:       NewButton(220, 400, 80, 40, "<"),
 		NextBtn:       NewButton(320, 400, 80, 40, ">"),
 		sendPacket:    sendPacket,
@@ -79,6 +81,7 @@ func (l *Lobby) Update() error {
 
 	l.RefreshBtn.Update(mouseX, mouseY)
 	l.CreateBtn.Update(mouseX, mouseY)
+	l.ReplayBtn.Update(mouseX, mouseY)
 	l.PrevBtn.Update(mouseX, mouseY)
 	l.NextBtn.Update(mouseX, mouseY)
 	l.updateRoomHover(mouseX, mouseY)
@@ -128,6 +131,8 @@ func (l *Lobby) handleClick() {
 		}
 	case l.CreateBtn.Hovered:
 		l.CreateDialog.Open()
+	case l.ReplayBtn.Hovered:
+		l.OnChangeScene(2, nil)
 	case l.PrevBtn.Hovered:
 		if l.Page > 0 {
 			l.Page--

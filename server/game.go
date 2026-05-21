@@ -4,6 +4,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
+	"sort"
 )
 
 type Axis int
@@ -131,4 +134,49 @@ func (l *Lobby) HandleReplayBatch(client *Client, inputs []ReplayInput) {
 	}
 
 	fmt.Printf("Room %d replay inputs stored from Client %d: %d\n", room.ID, client.ID, len(inputs))
+}
+
+func saveReplay(room *Room) {
+	ticks := make([]uint32, 0, len(room.Recorder))
+	for tick := range room.Recorder {
+		ticks = append(ticks, tick)
+	}
+	sort.Slice(ticks, func(i, j int) bool {
+		return ticks[i] < ticks[j]
+	})
+
+	payload := make([]byte, 0, 12+len(ticks)*8)
+	payload = append(payload, []byte("PONGREP1")...)
+	payload = binary.BigEndian.AppendUint32(payload, uint32(room.ID))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(len(ticks)))
+
+	for _, tick := range ticks {
+		frame := room.Recorder[tick]
+		payload = binary.BigEndian.AppendUint32(payload, tick)
+		payload = append(payload, byte(int8(frame.P1)))
+		payload = append(payload, byte(int8(frame.P2)))
+		payload = append(payload, boolByte(frame.P1Ready))
+		payload = append(payload, boolByte(frame.P2Ready))
+	}
+
+	if err := os.MkdirAll("replay", 0755); err != nil {
+		fmt.Printf("failed to create replay directory: %v\n", err)
+		return
+	}
+
+	filename := filepath.Join("replay", fmt.Sprintf("room_%d.rep", room.ID))
+	if err := os.WriteFile(filename, payload, 0644); err != nil {
+		fmt.Printf("failed to save replay %s: %v\n", filename, err)
+		return
+	}
+
+	fmt.Printf("Replay saved: %s (%d frames)\n", filename, len(ticks))
+}
+
+func boolByte(value bool) byte {
+	if value {
+		return 1
+	}
+
+	return 0
 }

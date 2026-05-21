@@ -211,8 +211,9 @@ func (l *Lobby) HandleGameOver(client *Client, report GameOverReport) {
 		}
 	}
 
-	log.Println(report)
 	if allVoted {
+		saveReplay(room)
+
 		for _, p := range room.Players {
 			p.State = ClientStateLobby
 			delete(l.ClientRoom, p.ID)

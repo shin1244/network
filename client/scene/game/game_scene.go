@@ -81,29 +81,7 @@ func (g *GameScene) Update() error {
 }
 
 func (g *GameScene) Draw(screen *ebiten.Image) {
-	screen.Fill(color.RGBA{18, 18, 22, 255})
-
-	for y := 0; y < ScreenHeight; y += 24 {
-		vector.FillRect(screen, ScreenWidth/2-1, float32(y), 2, 12, color.RGBA{90, 90, 100, 255}, false)
-	}
-
-	var leftColor color.Color = color.White
-	var rightColor color.Color = color.White
-	selfColor := color.RGBA{80, 220, 120, 255}
-	switch g.state.Player {
-	case Player1:
-		leftColor = selfColor
-	case Player2:
-		rightColor = selfColor
-	}
-
-	vector.FillRect(screen, float32(g.state.LeftPaddle.X), float32(g.state.LeftPaddle.Y), PaddleWidth, PaddleHeight, leftColor, false)
-	vector.FillRect(screen, float32(g.state.RightPaddle.X), float32(g.state.RightPaddle.Y), PaddleWidth, PaddleHeight, rightColor, false)
-	vector.FillRect(screen, float32(g.state.Ball.X), float32(g.state.Ball.Y), BallSize, BallSize, color.White, false)
-
-	score := fmt.Sprintf("%d          %d", g.state.LeftScore, g.state.RightScore)
-	ebitenutil.DebugPrintAt(screen, score, ScreenWidth/2-42, 24)
-
+	drawState(screen, g.state)
 	g.drawStartStatus(screen)
 }
 
@@ -225,6 +203,7 @@ func (g *GameScene) SendGameOverPacket() {
 
 func (g *GameScene) finishGame() {
 	g.SendGameOverPacket()
+	g.Flush() // 남은 리플레이 프레임 전송
 
 	// UDP 연결이 열려 있으면 닫기
 	if g.transport != nil {
@@ -269,4 +248,18 @@ func (g *GameScene) recordReplayInput(tick uint32, input Axis) {
 	if len(g.recorder) >= 60 {
 		g.Flush()
 	}
+}
+func drawState(screen *ebiten.Image, state *State) {
+	screen.Fill(color.RGBA{18, 18, 22, 255})
+
+	for y := 0; y < ScreenHeight; y += 24 {
+		vector.FillRect(screen, ScreenWidth/2-1, float32(y), 2, 12, color.RGBA{90, 90, 100, 255}, false)
+	}
+
+	vector.FillRect(screen, float32(state.LeftPaddle.X), float32(state.LeftPaddle.Y), PaddleWidth, PaddleHeight, color.White, false)
+	vector.FillRect(screen, float32(state.RightPaddle.X), float32(state.RightPaddle.Y), PaddleWidth, PaddleHeight, color.White, false)
+	vector.FillRect(screen, float32(state.Ball.X), float32(state.Ball.Y), BallSize, BallSize, color.White, false)
+
+	score := fmt.Sprintf("%d          %d", state.LeftScore, state.RightScore)
+	ebitenutil.DebugPrintAt(screen, score, ScreenWidth/2-42, 24)
 }

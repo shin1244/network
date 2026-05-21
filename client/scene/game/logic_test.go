@@ -123,6 +123,36 @@ func TestRemoteInputIsQueuedAndAcked(t *testing.T) {
 	}
 }
 
+func TestDecodeReplay(t *testing.T) {
+	data := []byte("PONGREP1")
+	data = binary.BigEndian.AppendUint32(data, 3)
+	data = binary.BigEndian.AppendUint32(data, 2)
+
+	data = binary.BigEndian.AppendUint32(data, 10)
+	data = append(data, replayAxisByte(AxisUp), replayAxisByte(AxisNeutral), 1, 1)
+
+	data = binary.BigEndian.AppendUint32(data, 11)
+	data = append(data, replayAxisByte(AxisNeutral), replayAxisByte(AxisDown), 1, 1)
+
+	replay, err := DecodeReplay(data)
+	if err != nil {
+		t.Fatalf("DecodeReplay returned error: %v", err)
+	}
+
+	if replay.RoomID != 3 {
+		t.Fatalf("room id = %d, want 3", replay.RoomID)
+	}
+	if len(replay.Frames) != 2 {
+		t.Fatalf("frame count = %d, want 2", len(replay.Frames))
+	}
+	if replay.Frames[0].Tick != 10 || replay.Frames[0].P1 != AxisUp || replay.Frames[0].P2 != AxisNeutral {
+		t.Fatalf("first frame decoded incorrectly: %+v", replay.Frames[0])
+	}
+	if replay.Frames[1].Tick != 11 || replay.Frames[1].P1 != AxisNeutral || replay.Frames[1].P2 != AxisDown {
+		t.Fatalf("second frame decoded incorrectly: %+v", replay.Frames[1])
+	}
+}
+
 type sentPacket struct {
 	command byte
 	payload []byte
@@ -165,4 +195,8 @@ func tickPayload(tick uint32) []byte {
 
 func packetTick(payload []byte) uint32 {
 	return binary.BigEndian.Uint32(payload[0:4])
+}
+
+func replayAxisByte(axis Axis) byte {
+	return byte(int8(axis))
 }
