@@ -21,6 +21,8 @@ type Room struct {
 	Name    string
 	Players []*Client
 
+	Recorder map[uint32]*ReplayFrame
+
 	GameOverVotes map[int32]bool
 }
 
@@ -157,9 +159,10 @@ func (l *Lobby) RoomListPayload() []byte {
 func (l *Lobby) createRoom(roomName string) *Room {
 	roomID := l.generateRoomID()
 	room := &Room{
-		ID:      roomID,
-		Name:    roomName,
-		Players: []*Client{},
+		ID:       roomID,
+		Name:     roomName,
+		Players:  []*Client{},
+		Recorder: make(map[uint32]*ReplayFrame),
 
 		GameOverVotes: make(map[int32]bool),
 	}
@@ -216,4 +219,16 @@ func (l *Lobby) HandleGameOver(client *Client, report GameOverReport) {
 		}
 		delete(l.Rooms, room.ID)
 	}
+}
+
+func (r *Room) PlayerNumber(client *Client) byte {
+	for i, player := range r.Players {
+		if player.ID != client.ID {
+			continue
+		}
+
+		return byte(i + 1)
+	}
+
+	return 0
 }

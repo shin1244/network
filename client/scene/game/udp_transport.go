@@ -164,3 +164,7 @@ func DeserializeUDPAddr(data []byte) (*net.UDPAddr, error) {
 		Port: port,
 	}, nil
 }
+
+func (t *UDPTransport) Close() error {
+	return t.conn.Close()
+}

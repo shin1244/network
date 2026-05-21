@@ -23,9 +23,15 @@ type GameScene struct {
 	netplay   *NetplaySession
 
 	countdownStartedAt time.Time
+	recorder           []ReplayFrame
 
 	sendPacket    func([]byte) error
 	OnChangeScene func(sceneID int, data []byte)
+}
+
+type ReplayFrame struct {
+	Tick  uint32
+	Input Axis
 }
 
 func NewGameScene(sendPacket func([]byte) error, onChangeScene func(sceneID int, data []byte), clientID int32, data []byte) *GameScene {
@@ -45,6 +51,7 @@ func NewGameScene(sendPacket func([]byte) error, onChangeScene func(sceneID int,
 		transport:     transport,
 		sendPacket:    sendPacket,
 		OnChangeScene: onChangeScene,
+		recorder:      []ReplayFrame{},
 	}
 	if transport != nil {
 		g.netplay = NewNetplaySession(player, transport)
@@ -55,8 +62,7 @@ func NewGameScene(sendPacket func([]byte) error, onChangeScene func(sceneID int,
 
 func (g *GameScene) Update() error {
 	if g.state.Winner != 0 {
-		g.SendGameOverPacket()
-		g.OnChangeScene(0, nil)
+		g.finishGame()
 		return nil
 	}
 	if g.netplay != nil {
@@ -169,6 +175,7 @@ func (g *GameScene) handleLocalInput() {
 
 	if g.netplay != nil && g.netplay.IsReady() {
 		g.netplay.SendLocalInput(futureTick, input)
+		g.recordReplayInput(futureTick, input)
 	}
 }
 
@@ -213,5 +220,53 @@ func (g *GameScene) SendGameOverPacket() {
 
 	if err := g.sendPacket(network.MakePacket(1, byte(2), payload)); err != nil {
 		log.Printf("failed to send game over packet: %v", err)
+	}
+}
+
+func (g *GameScene) finishGame() {
+	g.SendGameOverPacket()
+
+	// UDP 연결이 열려 있으면 닫기
+	if g.transport != nil {
+		_ = g.transport.Close()
+	}
+
+	g.OnChangeScene(0, nil)
+}
+
+func (g *GameScene) Flush() {
+	if len(g.recorder) == 0 {
+		return
+	}
+
+	g.sendPacket(network.MakePacket(1, byte(3), serializeReplay(g.recorder)))
+
+	g.recorder = g.recorder[:0]
+}
+
+func serializeReplay(frames []ReplayFrame) []byte {
+	payload := make([]byte, 2+len(frames)*5)
+	binary.BigEndian.PutUint16(payload[0:2], uint16(len(frames)))
+
+	offset := 2
+	for _, frame := range frames {
+		binary.BigEndian.PutUint32(payload[offset:offset+4], frame.Tick)
+		offset += 4
+
+		payload[offset] = byte(int8(frame.Input))
+		offset++
+	}
+
+	return payload
+}
+
+func (g *GameScene) recordReplayInput(tick uint32, input Axis) {
+	g.recorder = append(g.recorder, ReplayFrame{
+		Tick:  tick,
+		Input: input,
+	})
+
+	if len(g.recorder) >= 60 {
+		g.Flush()
 	}
 }

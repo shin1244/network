@@ -145,7 +145,15 @@ func (s *Server) Route() {
 					s.TryStartHolePunching(msg.Client)
 				}
 			case ClientStateGame:
-				if msg.Scene == 1 && msg.Command == 2 {
+				if msg.Scene != 1 {
+					continue
+				}
+				switch msg.Command {
+				case GameOverCommand:
+					if len(msg.Payload) < 10 {
+						log.Printf("invalid game over payload from client %d: %d bytes", msg.Client.ID, len(msg.Payload))
+						continue
+					}
 					report := GameOverReport{
 						Winner:       int32(binary.BigEndian.Uint32(msg.Payload[0:4])),
 						LeftScore:    msg.Payload[4],
@@ -153,6 +161,13 @@ func (s *Server) Route() {
 						GameOverTick: binary.BigEndian.Uint32(msg.Payload[6:10]),
 					}
 					s.Lobby.HandleGameOver(msg.Client, report)
+				case ReplayBatchCommand:
+					inputs, err := parseReplayBatch(msg.Payload)
+					if err != nil {
+						log.Printf("Error parsing replay batch: %v", err)
+						continue
+					}
+					s.Lobby.HandleReplayBatch(msg.Client, inputs)
 				}
 			}
 		}
