@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"os"
 )
 
 const replayMagic = "PONGREP1"
@@ -20,15 +19,6 @@ type StoredReplayFrame struct {
 	P2      Axis
 	P1Ready bool
 	P2Ready bool
-}
-
-func LoadReplay(filename string) (*StoredReplay, error) {
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, err
-	}
-
-	return DecodeReplay(data)
 }
 
 func DecodeReplay(data []byte) (*StoredReplay, error) {

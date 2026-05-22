@@ -103,13 +103,17 @@ func (g *SceneManager) ChangeScene(sceneID int, data []byte) {
 	case 1:
 		g.current = game.NewGameScene(g.client.WritePacket, g.ChangeScene, g.clientID, data) // 게임 씬으로 전환
 	case 2:
-		g.current = game.NewReplayScene(nil)
+		replay, err := game.DecodeReplay(data)
+		if err != nil {
+			log.Printf("failed to decode replay: %v", err)
+		}
+		g.current = game.NewReplayScene(replay)
 	}
 }
 
 // 서버에 처음 접속했을 때 클라이언트 ID를 받는 이벤트를 처리하는 함수
 func (g *SceneManager) handleGlobalServerEvent(event network.Event) bool {
-	if event.Scene == 0 && event.SceneCommand == byte(3) {
+	if event.Scene == 0 && event.SceneCommand == byte(lobby.JoinGame) {
 		if len(event.Data) < 4 {
 			log.Printf("invalid client id payload: %v", event.Data)
 			return true

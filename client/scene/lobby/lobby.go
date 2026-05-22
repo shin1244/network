@@ -16,6 +16,9 @@ const (
 	LobbyCreateRoom LobbyCommand = iota
 	LobbyJoinRoom
 	LobbyRefreshRooms
+	LobbyReplayList
+	LobbyJoinReplay
+	JoinGame
 )
 
 const (
@@ -24,15 +27,25 @@ const (
 	MaxRoomTitleBytes = 254
 )
 
+type LobbyMode byte
+
+const (
+	LobbyModeRooms LobbyMode = iota
+	LobbyModeReplays
+)
+
 type Lobby struct {
-	Rooms        []Room
-	Page         int
-	RefreshBtn   *Button
-	CreateBtn    *Button
-	ReplayBtn    *Button
-	PrevBtn      *Button
-	NextBtn      *Button
-	JoinBtnIndex int
+	Rooms         []Room
+	Replays       []Replay
+	Page          int
+	RefreshBtn    *Button
+	CreateBtn     *Button
+	ReplayBtn     *Button
+	PrevBtn       *Button
+	NextBtn       *Button
+	SelectedIndex int
+
+	Mode LobbyMode
 
 	CreateDialog *CreateRoomDialog
 
@@ -47,9 +60,15 @@ type Room struct {
 	PlayerCnt int
 }
 
+type Replay struct {
+	ID   int
+	Name string
+}
+
 func JoinLobby(sendPacket func([]byte) error, onChangeScene func(sceneID int, data []byte)) *Lobby {
 	l := &Lobby{
-		JoinBtnIndex:  -1,
+		SelectedIndex: -1,
+		Mode:          LobbyModeRooms,
 		Page:          0,
 		RefreshBtn:    NewButton(50, 400, 120, 40, "Refresh"),
 		CreateBtn:     NewButton(470, 400, 120, 40, "Create Room"),
@@ -84,7 +103,7 @@ func (l *Lobby) Update() error {
 	l.ReplayBtn.Update(mouseX, mouseY)
 	l.PrevBtn.Update(mouseX, mouseY)
 	l.NextBtn.Update(mouseX, mouseY)
-	l.updateRoomHover(mouseX, mouseY)
+	l.updateListHover(mouseX, mouseY)
 
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		l.handleClick()
@@ -104,20 +123,35 @@ func (l *Lobby) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeig
 func (l *Lobby) getPageRange() (start, end int) {
 	start = l.Page * MaxPage
 	end = start + MaxPage
-	if end > len(l.Rooms) {
-		end = len(l.Rooms)
+	itemCount := l.currentListLen()
+	if end > itemCount {
+		end = itemCount
 	}
 	return
 }
 
-func (l *Lobby) updateRoomHover(mouseX, mouseY int) {
-	l.JoinBtnIndex = -1
+func (l *Lobby) currentListLen() int {
+	if l.Mode == LobbyModeReplays {
+		return len(l.Replays)
+	}
+
+	return len(l.Rooms)
+}
+
+func (l *Lobby) resetListView(mode LobbyMode) {
+	l.Mode = mode
+	l.Page = 0
+	l.SelectedIndex = -1
+}
+
+func (l *Lobby) updateListHover(mouseX, mouseY int) {
+	l.SelectedIndex = -1
 
 	start, end := l.getPageRange()
 	for i := start; i < end; i++ {
-		roomY := 80 + ((i - start) * 60)
-		if mouseX >= 50 && mouseX <= 590 && mouseY >= roomY && mouseY <= roomY+50 {
-			l.JoinBtnIndex = i
+		itemY := 80 + ((i - start) * 60)
+		if mouseX >= 50 && mouseX <= 590 && mouseY >= itemY && mouseY <= itemY+50 {
+			l.SelectedIndex = i
 			return
 		}
 	}
@@ -126,32 +160,62 @@ func (l *Lobby) updateRoomHover(mouseX, mouseY int) {
 func (l *Lobby) handleClick() {
 	switch {
 	case l.RefreshBtn.Hovered:
+		l.resetListView(LobbyModeRooms)
 		if err := l.sendRefreshRooms(); err != nil {
 			log.Printf("failed to refresh rooms: %v", err)
 		}
 	case l.CreateBtn.Hovered:
+		l.resetListView(LobbyModeRooms)
 		l.CreateDialog.Open()
 	case l.ReplayBtn.Hovered:
-		l.OnChangeScene(2, nil)
+		l.resetListView(LobbyModeReplays)
+		l.sendReplayList()
 	case l.PrevBtn.Hovered:
 		if l.Page > 0 {
 			l.Page--
-			l.JoinBtnIndex = -1
+			l.SelectedIndex = -1
 		}
 	case l.NextBtn.Hovered:
-		maxPage := (len(l.Rooms) - 1) / MaxPage
+		maxPage := (l.currentListLen() - 1) / MaxPage
 		if l.Page < maxPage {
 			l.Page++
-			l.JoinBtnIndex = -1
+			l.SelectedIndex = -1
 		}
-	case l.JoinBtnIndex != -1:
-		room := l.Rooms[l.JoinBtnIndex]
+	case l.SelectedIndex != -1:
+		if l.Mode == LobbyModeReplays {
+			l.handleReplayClick(l.SelectedIndex)
+			return
+		}
+
+		room := l.Rooms[l.SelectedIndex]
 		if room.PlayerCnt < MaxPlayers {
 			if err := l.sendJoinRoom(int32(room.ID)); err != nil {
 				log.Printf("failed to join room: %v", err)
 			}
 			fmt.Printf("[%s] joined\n", room.Name)
 		}
+	}
+}
+
+func (l *Lobby) handleReplayClick(index int) {
+	if index < 0 || index >= len(l.Replays) {
+		return
+	}
+
+	replay := l.Replays[index]
+	fmt.Printf("[%s] replay selected\n", replay.Name)
+
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload, uint32(replay.ID))
+	packet := network.MakePacket(
+		byte(0),
+		byte(LobbyJoinReplay),
+		payload,
+	)
+
+	if err := l.sendPacket(packet); err != nil {
+		log.Printf("failed to request replay: %v", err)
+		return
 	}
 }
 
@@ -205,15 +269,30 @@ func (l *Lobby) sendJoinRoom(roomID int32) error {
 }
 
 func (l *Lobby) handleRoomList(data []byte) {
+	if len(data) == 0 {
+		l.Rooms = nil
+		return
+	}
+
 	roomCount := int(data[0])
 	offset := 1
 	rooms := make([]Room, roomCount)
 	for i := 0; i < roomCount; i++ {
+		if offset+5 > len(data) {
+			log.Printf("invalid room list payload: %v", data)
+			break
+		}
+
 		roomID := int(binary.BigEndian.Uint32(data[offset : offset+4]))
 		offset += 4
 
 		nameLen := int(data[offset])
 		offset++
+
+		if offset+nameLen+1 > len(data) {
+			log.Printf("invalid room list payload: %v", data)
+			break
+		}
 
 		roomName := string(data[offset : offset+nameLen])
 		offset += nameLen
@@ -230,6 +309,43 @@ func (l *Lobby) handleRoomList(data []byte) {
 	l.Rooms = rooms
 }
 
+func (l *Lobby) handleReplayList(data []byte) {
+	if len(data) == 0 {
+		l.Replays = nil
+		return
+	}
+
+	replayCount := int(data[0])
+	offset := 1
+	replays := make([]Replay, replayCount)
+	for i := 0; i < replayCount; i++ {
+		if offset+5 > len(data) {
+			log.Printf("invalid replay list payload: %v", data)
+			break
+		}
+
+		replayID := int(binary.BigEndian.Uint32(data[offset : offset+4]))
+		offset += 4
+
+		nameLen := int(data[offset])
+		offset++
+
+		if offset+nameLen > len(data) {
+			log.Printf("invalid replay list payload: %v", data)
+			break
+		}
+
+		replayName := string(data[offset : offset+nameLen])
+		offset += nameLen
+
+		replays[i] = Replay{
+			ID:   replayID,
+			Name: replayName,
+		}
+	}
+	l.Replays = replays
+}
+
 func (l *Lobby) HandleServerEvent(event network.Event) {
 	scene := event.Scene
 	cmd := event.SceneCommand
@@ -240,9 +356,27 @@ func (l *Lobby) HandleServerEvent(event network.Event) {
 
 	switch cmd {
 	case byte(LobbyRefreshRooms):
+		l.resetListView(LobbyModeRooms)
 		l.handleRoomList(event.Data)
 	case byte(LobbyJoinRoom):
 		fmt.Println(event.Data)
 		l.OnChangeScene(1, event.Data)
+	case byte(LobbyReplayList):
+		l.resetListView(LobbyModeReplays)
+		l.handleReplayList(event.Data)
+	case byte(LobbyJoinReplay):
+		l.OnChangeScene(2, event.Data)
+	}
+}
+
+func (l *Lobby) sendReplayList() {
+	packet := network.MakePacket(
+		byte(0),
+		byte(LobbyReplayList),
+		nil,
+	)
+
+	if err := l.sendPacket(packet); err != nil {
+		log.Printf("failed to request replay list: %v", err)
 	}
 }

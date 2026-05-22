@@ -13,6 +13,8 @@ const (
 	LobbyCreateRoom LobbyCommand = iota
 	LobbyJoinRoom
 	LobbyRefreshRooms
+	LobbyReplayList
+	LobbyJoinReplay
 	JoinGame
 )
 
@@ -95,6 +97,25 @@ func (l *Lobby) LobbyManager(msg Message) (*Room, bool) {
 			byte(ClientStateLobby),
 			byte(LobbyRefreshRooms),
 			payload,
+		)
+		msg.Client.Send <- packet
+
+	case LobbyReplayList:
+		replayListPayload := l.ReplayListPayload()
+
+		packet := MakePacket(
+			byte(ClientStateLobby),
+			byte(LobbyReplayList),
+			replayListPayload,
+		)
+		msg.Client.Send <- packet
+	case LobbyJoinReplay:
+		replayPayload := l.ReplayPayload(msg.Payload)
+
+		packet := MakePacket(
+			byte(ClientStateLobby),
+			byte(LobbyJoinReplay),
+			replayPayload,
 		)
 		msg.Client.Send <- packet
 	}
