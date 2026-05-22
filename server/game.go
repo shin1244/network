@@ -116,12 +116,14 @@ func (l *Lobby) HandleReplayBatch(client *Client, inputs []ReplayInput) {
 		return
 	}
 
+	updatedTicks := make([]uint32, 0, len(inputs))
 	for _, input := range inputs {
 		frame := room.Recorder[input.Tick]
 		if frame == nil {
 			frame = &ReplayFrame{Tick: input.Tick}
 			room.Recorder[input.Tick] = frame
 		}
+		updatedTicks = append(updatedTicks, input.Tick)
 
 		switch player {
 		case 1:
@@ -133,7 +135,29 @@ func (l *Lobby) HandleReplayBatch(client *Client, inputs []ReplayInput) {
 		}
 	}
 
+	l.BroadcastReplayFrames(room, updatedTicks)
 	fmt.Printf("Room %d replay inputs stored from Client %d: %d\n", room.ID, client.ID, len(inputs))
+}
+
+func (l *Lobby) BroadcastReplayFrames(room *Room, ticks []uint32) {
+	if len(room.Observers) == 0 {
+		return
+	}
+
+	payload := replayFramesPayload(room.Recorder, ticks)
+	if len(payload) == 2 {
+		return
+	}
+
+	packet := MakePacket(
+		byte(ClientStateLobby),
+		byte(LobbyWatchRoom),
+		payload,
+	)
+
+	for _, observer := range room.Observers {
+		observer.Send <- packet
+	}
 }
 
 func saveReplay(room *Room) {

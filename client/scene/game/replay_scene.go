@@ -22,18 +22,20 @@ const (
 type ReplayScene struct {
 	state           *State
 	replay          *StoredReplay
-	index           int
+	loadedFrames    int
 	speedIndex      int
 	stepAccumulator float64
 }
 
 func NewReplayScene(replay *StoredReplay) *ReplayScene {
-	return &ReplayScene{
+	scene := &ReplayScene{
 		state:      NewState(Player1),
 		replay:     replay,
-		index:      0,
 		speedIndex: 1,
 	}
+
+	scene.loadReplayFrames()
+	return scene
 }
 
 func (r *ReplayScene) Update() error {
@@ -58,7 +60,7 @@ func (r *ReplayScene) Draw(screen *ebiten.Image) {
 		return
 	}
 
-	progress := fmt.Sprintf("Replay %d / %d", r.index, len(r.replay.Frames))
+	progress := fmt.Sprintf("Replay %d / %d", r.state.Tick, r.loadedFrames)
 	ebitenutil.DebugPrintAt(screen, progress, 20, 20)
 	r.drawSpeedButton(screen)
 }
@@ -68,19 +70,37 @@ func (r *ReplayScene) Layout(outsideWidth, outsideHeight int) (screenWidth, scre
 }
 
 func (r *ReplayScene) stepReplay() {
-	if r.replay == nil || r.index >= len(r.replay.Frames) {
+	if r.replay == nil {
 		return
 	}
 
-	frame := r.replay.Frames[r.index]
-	if frame.P1Ready && frame.P2Ready {
-		r.state.Step(Input{
-			Player1: frame.P1,
-			Player2: frame.P2,
-		})
+	frame := r.state.CommandQueue[r.state.Tick]
+	if frame == nil || !frame.P1Ready || !frame.P2Ready {
+		return
 	}
 
-	r.index++
+	r.state.Step(Input{
+		Player1: frame.P1Input,
+		Player2: frame.P2Input,
+	})
+
+	delete(r.state.CommandQueue, r.state.Tick-1)
+}
+
+func (r *ReplayScene) loadReplayFrames() {
+	if r.replay == nil {
+		return
+	}
+
+	for _, frame := range r.replay.Frames {
+		if !frame.P1Ready || !frame.P2Ready {
+			continue
+		}
+
+		r.state.PushCommand(frame.Tick, Player1, frame.P1)
+		r.state.PushCommand(frame.Tick, Player2, frame.P2)
+		r.loadedFrames++
+	}
 }
 
 func (r *ReplayScene) isSpeedButtonHovered() bool {

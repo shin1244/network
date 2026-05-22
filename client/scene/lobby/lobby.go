@@ -18,6 +18,7 @@ const (
 	LobbyRefreshRooms
 	LobbyReplayList
 	LobbyJoinReplay
+	LobbyWatchRoom
 	JoinGame
 )
 
@@ -25,6 +26,10 @@ const (
 	MaxPage           = 5
 	MaxPlayers        = 2
 	MaxRoomTitleBytes = 254
+
+	watchButtonX = 500
+	watchButtonW = 70
+	watchButtonH = 30
 )
 
 type LobbyMode byte
@@ -188,6 +193,16 @@ func (l *Lobby) handleClick() {
 		}
 
 		room := l.Rooms[l.SelectedIndex]
+		if room.PlayerCnt >= MaxPlayers {
+			if l.isWatchButtonHovered(l.SelectedIndex) {
+				if err := l.sendWatchRoom(int32(room.ID)); err != nil {
+					log.Printf("failed to watch room: %v", err)
+				}
+				fmt.Printf("[%s] watch requested\n", room.Name)
+			}
+			return
+		}
+
 		if room.PlayerCnt < MaxPlayers {
 			if err := l.sendJoinRoom(int32(room.ID)); err != nil {
 				log.Printf("failed to join room: %v", err)
@@ -195,6 +210,27 @@ func (l *Lobby) handleClick() {
 			fmt.Printf("[%s] joined\n", room.Name)
 		}
 	}
+}
+
+func (l *Lobby) isWatchButtonHovered(index int) bool {
+	if l.Mode != LobbyModeRooms || index < 0 || index >= len(l.Rooms) {
+		return false
+	}
+	if l.Rooms[index].PlayerCnt < MaxPlayers {
+		return false
+	}
+
+	mouseX, mouseY := ebiten.CursorPosition()
+	_, buttonY := l.watchButtonPosition(index)
+	return mouseX >= watchButtonX &&
+		mouseX <= watchButtonX+watchButtonW &&
+		mouseY >= buttonY &&
+		mouseY <= buttonY+watchButtonH
+}
+
+func (l *Lobby) watchButtonPosition(index int) (x, y int) {
+	start := l.Page * MaxPage
+	return watchButtonX, 80 + ((index - start) * 60) + 10
 }
 
 func (l *Lobby) handleReplayClick(index int) {
@@ -262,6 +298,19 @@ func (l *Lobby) sendJoinRoom(roomID int32) error {
 	packet := network.MakePacket(
 		byte(0),
 		byte(LobbyJoinRoom),
+		payload,
+	)
+
+	return l.sendPacket(packet)
+}
+
+func (l *Lobby) sendWatchRoom(roomID int32) error {
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload, uint32(roomID))
+
+	packet := network.MakePacket(
+		byte(0),
+		byte(LobbyWatchRoom),
 		payload,
 	)
 
@@ -366,6 +415,9 @@ func (l *Lobby) HandleServerEvent(event network.Event) {
 		l.handleReplayList(event.Data)
 	case byte(LobbyJoinReplay):
 		l.OnChangeScene(2, event.Data)
+	case byte(LobbyWatchRoom):
+		log.Printf("Received watch room response: %v", event.Data)
+		l.OnChangeScene(3, event.Data)
 	}
 }
 

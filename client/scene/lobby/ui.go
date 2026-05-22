@@ -77,6 +77,9 @@ func (l *Lobby) drawLobby(screen *ebiten.Image) {
 		}
 
 		ebitenutil.DebugPrintAt(screen, info, 70, itemY+18)
+		if l.Mode == LobbyModeRooms && realIndex == l.SelectedIndex && l.Rooms[i].PlayerCnt >= MaxPlayers {
+			l.drawWatchButton(screen, realIndex)
+		}
 	}
 
 	itemCount := l.currentListLen()
@@ -94,4 +97,23 @@ func (l *Lobby) drawLobby(screen *ebiten.Image) {
 	l.PrevBtn.Draw(screen)
 	l.NextBtn.Draw(screen)
 	l.CreateDialog.Draw(screen)
+}
+
+func (l *Lobby) drawWatchButton(screen *ebiten.Image, index int) {
+	buttonX, buttonY := l.watchButtonPosition(index)
+	buttonColor := color.RGBA{80, 120, 90, 255}
+	if l.isWatchButtonHovered(index) {
+		buttonColor = color.RGBA{110, 165, 125, 255}
+	}
+
+	vector.FillRect(
+		screen,
+		float32(buttonX),
+		float32(buttonY),
+		float32(watchButtonW),
+		float32(watchButtonH),
+		buttonColor,
+		false,
+	)
+	ebitenutil.DebugPrintAt(screen, "Watch", buttonX+14, buttonY+9)
 }

@@ -147,3 +147,48 @@ func DecodeReplay(data []byte) (*StoredReplay, error) {
 		Frames: frames,
 	}, nil
 }
+
+func replayFramesPayload(recorder map[uint32]*ReplayFrame, ticks []uint32) []byte {
+	if ticks == nil {
+		ticks = make([]uint32, 0, len(recorder))
+		for tick := range recorder {
+			ticks = append(ticks, tick)
+		}
+	}
+
+	sort.Slice(ticks, func(i, j int) bool {
+		return ticks[i] < ticks[j]
+	})
+
+	frames := make([]byte, 0, 2+len(ticks)*8)
+	frames = append(frames, 0, 0)
+	frameCount := 0
+	var lastTick uint32
+	hasLastTick := false
+
+	for _, tick := range ticks {
+		if hasLastTick && tick == lastTick {
+			continue
+		}
+		lastTick = tick
+		hasLastTick = true
+
+		frame := recorder[tick]
+		if frame == nil {
+			continue
+		}
+		if !frame.P1Ready || !frame.P2Ready {
+			continue
+		}
+
+		frames = binary.BigEndian.AppendUint32(frames, tick)
+		frames = append(frames, byte(int8(frame.P1)))
+		frames = append(frames, byte(int8(frame.P2)))
+		frames = append(frames, boolByte(frame.P1Ready))
+		frames = append(frames, boolByte(frame.P2Ready))
+		frameCount++
+	}
+
+	binary.BigEndian.PutUint16(frames[0:2], uint16(frameCount))
+	return frames
+}

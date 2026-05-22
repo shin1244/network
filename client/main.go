@@ -108,6 +108,8 @@ func (g *SceneManager) ChangeScene(sceneID int, data []byte) {
 			log.Printf("failed to decode replay: %v", err)
 		}
 		g.current = game.NewReplayScene(replay)
+	case 3:
+		g.current = game.NewObserverScene(data)
 	}
 }
 

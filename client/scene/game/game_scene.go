@@ -190,7 +190,7 @@ func (g *GameScene) SendGameOverPacket() {
 		GameOverTick: g.state.GameOverTick,
 	}
 
-	payload := make([]byte, 16)
+	payload := make([]byte, 10)
 	binary.BigEndian.PutUint32(payload[0:4], uint32(report.Winner))
 	payload[4] = report.LeftScore
 	payload[5] = report.RightScore
@@ -202,8 +202,8 @@ func (g *GameScene) SendGameOverPacket() {
 }
 
 func (g *GameScene) finishGame() {
+	g.Flush()
 	g.SendGameOverPacket()
-	g.Flush() // 남은 리플레이 프레임 전송
 
 	// UDP 연결이 열려 있으면 닫기
 	if g.transport != nil {
@@ -256,8 +256,16 @@ func drawState(screen *ebiten.Image, state *State) {
 		vector.FillRect(screen, ScreenWidth/2-1, float32(y), 2, 12, color.RGBA{90, 90, 100, 255}, false)
 	}
 
-	vector.FillRect(screen, float32(state.LeftPaddle.X), float32(state.LeftPaddle.Y), PaddleWidth, PaddleHeight, color.White, false)
-	vector.FillRect(screen, float32(state.RightPaddle.X), float32(state.RightPaddle.Y), PaddleWidth, PaddleHeight, color.White, false)
+	leftPaddleColor := color.RGBA{255, 255, 255, 255}
+	rightPaddleColor := color.RGBA{255, 255, 255, 255}
+	if state.Player == Player1 {
+		leftPaddleColor = color.RGBA{80, 220, 120, 255}
+	} else if state.Player == Player2 {
+		rightPaddleColor = color.RGBA{80, 220, 120, 255}
+	}
+
+	vector.FillRect(screen, float32(state.LeftPaddle.X), float32(state.LeftPaddle.Y), PaddleWidth, PaddleHeight, leftPaddleColor, false)
+	vector.FillRect(screen, float32(state.RightPaddle.X), float32(state.RightPaddle.Y), PaddleWidth, PaddleHeight, rightPaddleColor, false)
 	vector.FillRect(screen, float32(state.Ball.X), float32(state.Ball.Y), BallSize, BallSize, color.White, false)
 
 	score := fmt.Sprintf("%d          %d", state.LeftScore, state.RightScore)

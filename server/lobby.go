@@ -15,6 +15,7 @@ const (
 	LobbyRefreshRooms
 	LobbyReplayList
 	LobbyJoinReplay
+	LobbyWatchRoom
 	JoinGame
 )
 
@@ -22,6 +23,8 @@ type Room struct {
 	ID      int32
 	Name    string
 	Players []*Client
+
+	Observers []*Client
 
 	Recorder map[uint32]*ReplayFrame
 
@@ -118,6 +121,27 @@ func (l *Lobby) LobbyManager(msg Message) (*Room, bool) {
 			replayPayload,
 		)
 		msg.Client.Send <- packet
+	case LobbyWatchRoom:
+		if len(msg.Payload) < 4 {
+			log.Printf("invalid watch room payload from Client %d: %v", msg.Client.ID, msg.Payload)
+			return nil, false
+		}
+
+		roomID := int32(binary.BigEndian.Uint32(msg.Payload))
+		room, exists := l.Rooms[roomID]
+		if !exists {
+			log.Printf("room %d does not exist, cannot watch", roomID)
+			return nil, false
+		}
+
+		log.Printf("Received watch room request from Client %d for Room %d\n", msg.Client.ID, roomID)
+		room.AddObserver(msg.Client)
+		msg.Client.Send <- MakePacket(
+			byte(ClientStateLobby),
+			byte(LobbyWatchRoom),
+			replayFramesPayload(room.Recorder, nil),
+		)
+		log.Printf("Client %d is now watching Room %d\n", msg.Client.ID, roomID)
 	}
 	return nil, false
 }
@@ -159,7 +183,25 @@ func (r *Room) IsReady() bool {
 	return len(r.Players) == 2
 }
 
-// 패킷: [방 개수(최대 255)] + 갱신 루프 [방ID(4B)][이름길이(1B)][이름(...)][인원수(1B)]...
+func (r *Room) AddObserver(client *Client) {
+	for _, observer := range r.Observers {
+		if observer.ID == client.ID {
+			return
+		}
+	}
+
+	r.Observers = append(r.Observers, client)
+}
+
+func (r *Room) RemoveObserver(client *Client) {
+	for i, observer := range r.Observers {
+		if observer.ID == client.ID {
+			r.Observers = append(r.Observers[:i], r.Observers[i+1:]...)
+			return
+		}
+	}
+}
+
 func (l *Lobby) RoomListPayload() []byte {
 	payload := make([]byte, 1)
 	payload[0] = byte(len(l.Rooms))
@@ -195,6 +237,7 @@ func (l *Lobby) createRoom(roomName string) *Room {
 func (l *Lobby) LeaveRoom(client *Client) {
 	room, exists := l.ClientRoom[client.ID]
 	if !exists {
+		l.RemoveObserver(client)
 		return
 	}
 
@@ -212,6 +255,12 @@ func (l *Lobby) LeaveRoom(client *Client) {
 	if len(room.Players) == 0 {
 		delete(l.Rooms, room.ID)
 		fmt.Printf("Room %d closed (No players left)\n", room.ID)
+	}
+}
+
+func (l *Lobby) RemoveObserver(client *Client) {
+	for _, room := range l.Rooms {
+		room.RemoveObserver(client)
 	}
 }
 
