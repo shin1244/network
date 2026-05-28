@@ -138,5 +138,6 @@ func MakePacket(scene byte, command byte, payload []byte) []byte {
 ## 기술 스택
 
 `Go` · `UDP` · `TCP` · `P2P Hole Punching` · `Lockstep` · `Deterministic Simulation` · `Ebiten`
+<br>
   <sub>Made by <a href="https://github.com/shin1244">shin1244</a></sub>
 </p>
