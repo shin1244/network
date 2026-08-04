@@ -300,19 +300,6 @@ func compareReport(report GameOverReport, result VerifyResult) (reason string, o
 
 지금까지의 조각들을 하나로 모은 전체 그림입니다.
 
-```
-[Client 1] ──TCP── [Lobby Server] ──TCP── [Client 2]
-     │          (매칭 · 방 관리 · 홀펀칭 중개 · 검증)          │
-     │                                                       │
-     └──────────────  UDP P2P (입력 교환)  ──────────────────┘
-                            │
-                  틱별 입력(5B)만 전송
-                            │
-              각자 동일한 결정론적 Step() 실행
-                            │
-                  → 양쪽 상태가 항상 일치
-```
-
 - **로비 (TCP)** — 매칭, 방 관리, UDP 홀펀칭 중개. 신뢰성이 필요한 제어 신호만 처리
 - **게임 (UDP P2P)** — 틱 단위 입력 교환, ACK/재전송. 저지연·저비용이 최우선
 - **시뮬레이션 (`pongsim` 공유 모듈)** — 정수 연산 기반 결정론적 `Step()`. **클라이언트와 서버가 같은 코드를 실행**
@@ -330,28 +317,6 @@ PONG/
 ├─ client/    # Ebiten 그래픽 클라이언트 (게임·리플레이·관전 씬)
 └─ server/    # TCP 로비 + UDP 중개 + 검증/기록 서버
 ```
-
----
-
-## 바이너리 패킷 프로토콜
-
-모든 통신은 `Scene(1B) + Command(1B) + Payload Length(4B) + Payload`의 경량 바이너리 구조를 사용합니다. 고정 6바이트 헤더를 먼저 읽고, 명시된 길이만큼 페이로드를 읽어 TCP 스트림에서도 패킷 경계를 정확히 구분합니다. 게임 입력 패킷은 페이로드가 **단 5바이트**(틱 4B + 입력 1B)로, 실시간 교환에 드는 대역폭을 최소화했습니다.
-
-<p align="center">
-  <img src="docs/packet-protocol.png" width="640" alt="바이너리 패킷 프로토콜 구조" />
-</p>
-
-```go
-func MakePacket(scene byte, command byte, payload []byte) []byte {
-    header := make([]byte, 6)
-    header[0] = scene
-    header[1] = command
-    binary.BigEndian.PutUint32(header[2:6], uint32(len(payload)))
-    return append(header, payload...)
-}
-```
-
----
 
 ## 정리 — 두 마리 토끼는 잡혔나
 
