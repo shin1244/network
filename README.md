@@ -7,9 +7,8 @@ UDP P2P 락스텝으로 구현한 실시간 1v1 Pong 게임으로<br/>
 
 <br/>
 
-<img src="docs/demo.jpeg" width="640" alt="두 클라이언트의 동일한 게임 상태 — 락스텝 동기화 결과" />
+<img width="400" height="148" alt="게임 화면" src="https://github.com/user-attachments/assets/0b16b70f-8593-445a-9837-e1f5b47ca3bb" />
 
-<sub>**▲ 두 클라이언트가 P2P로 입력만 교환하고, 각자 동일한 로직으로 계산한 결과 — 상태가 완전히 일치한다**</sub>
 
 <br/>
 
