@@ -2,7 +2,12 @@ module pong
 
 go 1.24.4
 
-require github.com/hajimehoshi/ebiten/v2 v2.9.9
+require (
+	github.com/hajimehoshi/ebiten/v2 v2.9.9
+	pongsim v0.0.0
+)
+
+replace pongsim => ../sim
 
 require (
 	github.com/ebitengine/gomobile v0.0.0-20250923094054-ea854a63cce1 // indirect

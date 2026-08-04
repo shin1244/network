@@ -29,6 +29,7 @@ type Room struct {
 	Recorder map[uint32]*ReplayFrame
 
 	GameOverVotes map[int32]bool
+	Reports       map[int32]GameOverReport // 클라이언트별 게임 종료 보고 (서버 재현 결과와 대조용)
 }
 
 type Lobby struct {
@@ -228,6 +229,7 @@ func (l *Lobby) createRoom(roomName string) *Room {
 		Recorder: make(map[uint32]*ReplayFrame),
 
 		GameOverVotes: make(map[int32]bool),
+		Reports:       make(map[int32]GameOverReport),
 	}
 	l.Rooms[roomID] = room
 	fmt.Printf("Room %d ('%s') created successfully\n", roomID, roomName)
@@ -272,6 +274,7 @@ func (l *Lobby) HandleGameOver(client *Client, report GameOverReport) {
 	}
 
 	room.GameOverVotes[client.ID] = true
+	room.Reports[client.ID] = report
 
 	allVoted := true
 	for _, voted := range room.GameOverVotes {
@@ -282,6 +285,10 @@ func (l *Lobby) HandleGameOver(client *Client, report GameOverReport) {
 	}
 
 	if allVoted {
+		// 서버가 기록된 입력만으로 결과를 독립 재현해 클라이언트 보고와 대조
+		result := VerifyRoom(room)
+		l.verifyReports(room, result)
+
 		saveReplay(room)
 
 		for _, p := range room.Players {

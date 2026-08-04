@@ -1,226 +1,46 @@
 package game
 
-import "log"
+// 게임 시뮬레이션 코어는 클라이언트와 서버가 공유하는 pongsim 모듈로 추출되었습니다.
+// 이 파일은 기존 game 패키지 API(game.State, game.NewState 등)를 유지하기 위해
+// 공유 모듈의 타입·상수를 타입 별칭으로 재노출하는 얇은 shim 입니다.
+// 실제 로직은 sim 패키지 한 곳에만 존재하므로, 클라/서버 시뮬레이션이 구조적으로 항상 동일합니다.
 
-const (
-	ScreenWidth  = 640
-	ScreenHeight = 480
+import "pongsim"
 
-	PaddleWidth  = 10
-	PaddleHeight = 72
-	PaddleSpeed  = 6
-	PaddleMargin = 28
-
-	BallSize = 10
-	BallDX   = 5
-	BallDY   = 3
-
-	WinningScore = 3
+type (
+	Axis       = sim.Axis
+	Input      = sim.Input
+	Rect       = sim.Rect
+	Ball       = sim.Ball
+	State      = sim.State
+	FrameInput = sim.FrameInput
 )
 
-type Axis int
-
 const (
-	AxisNeutral Axis = 0
-	AxisUp      Axis = -1
-	AxisDown    Axis = 1
+	ScreenWidth  = sim.ScreenWidth
+	ScreenHeight = sim.ScreenHeight
 
-	Player1 uint8 = 1
-	Player2 uint8 = 2
+	PaddleWidth  = sim.PaddleWidth
+	PaddleHeight = sim.PaddleHeight
+	PaddleSpeed  = sim.PaddleSpeed
+	PaddleMargin = sim.PaddleMargin
+
+	BallSize = sim.BallSize
+	BallDX   = sim.BallDX
+	BallDY   = sim.BallDY
+
+	WinningScore = sim.WinningScore
+
+	InputDelay = sim.InputDelay
+
+	AxisNeutral = sim.AxisNeutral
+	AxisUp      = sim.AxisUp
+	AxisDown    = sim.AxisDown
+
+	Player1 = sim.Player1
+	Player2 = sim.Player2
 )
-
-type Input struct {
-	Player1 Axis
-	Player2 Axis
-}
-
-type Rect struct {
-	X int
-	Y int
-}
-
-type Ball struct {
-	X  int
-	Y  int
-	VX int
-	VY int
-}
-
-type State struct {
-	LeftPaddle  Rect
-	RightPaddle Rect
-	Ball        Ball
-	LeftScore   int
-	RightScore  int
-	Winner      uint8
-	Tick        uint32
-
-	CommandQueue map[uint32]*FrameInput
-	Player       uint8
-
-	GameOverTick uint32
-}
-
-type FrameInput struct {
-	P1Input Axis
-	P2Input Axis
-	P1Ready bool
-	P2Ready bool
-}
 
 func NewState(player uint8) *State {
-	s := &State{
-		LeftPaddle: Rect{
-			X: PaddleMargin,
-			Y: (ScreenHeight - PaddleHeight) / 2,
-		},
-		RightPaddle: Rect{
-			X: ScreenWidth - PaddleMargin - PaddleWidth,
-			Y: (ScreenHeight - PaddleHeight) / 2,
-		},
-		Player:       player,
-		CommandQueue: make(map[uint32]*FrameInput),
-	}
-
-	for tick := uint32(0); tick < InputDelay; tick++ {
-		s.CommandQueue[tick] = &FrameInput{
-			P1Input: AxisNeutral,
-			P2Input: AxisNeutral,
-			P1Ready: true,
-			P2Ready: true,
-		}
-	}
-
-	log.Printf("Initial CommandQueue: %v", s.CommandQueue)
-
-	s.resetBall(1)
-	return s
-}
-
-func (s *State) Step(input Input) {
-	s.Tick++
-
-	s.movePaddle(&s.LeftPaddle, input.Player1)
-	s.movePaddle(&s.RightPaddle, input.Player2)
-	s.moveBall()
-}
-
-func (s *State) movePaddle(paddle *Rect, axis Axis) {
-	paddle.Y += int(axis) * PaddleSpeed
-	paddle.Y = clamp(paddle.Y, 0, ScreenHeight-PaddleHeight)
-}
-
-func (s *State) moveBall() {
-	s.Ball.X += s.Ball.VX
-	s.Ball.Y += s.Ball.VY
-
-	if s.Ball.Y <= 0 {
-		s.Ball.Y = 0
-		s.Ball.VY = abs(s.Ball.VY)
-	} else if s.Ball.Y+BallSize >= ScreenHeight {
-		s.Ball.Y = ScreenHeight - BallSize
-		s.Ball.VY = -abs(s.Ball.VY)
-	}
-
-	if s.Ball.VX < 0 && overlapsPaddle(s.Ball, s.LeftPaddle) {
-		s.Ball.X = s.LeftPaddle.X + PaddleWidth
-		s.Ball.VX = abs(s.Ball.VX)
-		s.Ball.VY = bounceVelocity(s.Ball, s.LeftPaddle)
-	} else if s.Ball.VX > 0 && overlapsPaddle(s.Ball, s.RightPaddle) {
-		s.Ball.X = s.RightPaddle.X - BallSize
-		s.Ball.VX = -abs(s.Ball.VX)
-		s.Ball.VY = bounceVelocity(s.Ball, s.RightPaddle)
-	}
-
-	if s.Ball.X+BallSize < 0 {
-		s.RightScore++
-		s.checkGameOver()
-		if s.Winner == 0 {
-			s.resetBall(-1)
-		}
-	} else if s.Ball.X > ScreenWidth {
-		s.LeftScore++
-		s.checkGameOver()
-		if s.Winner == 0 {
-			s.resetBall(1)
-		}
-	}
-}
-
-func (s *State) resetBall(direction int) {
-	s.Ball = Ball{
-		X:  (ScreenWidth - BallSize) / 2,
-		Y:  (ScreenHeight - BallSize) / 2,
-		VX: direction * BallDX,
-		VY: BallDY,
-	}
-}
-
-func overlapsPaddle(ball Ball, paddle Rect) bool {
-	return ball.X < paddle.X+PaddleWidth &&
-		ball.X+BallSize > paddle.X &&
-		ball.Y < paddle.Y+PaddleHeight &&
-		ball.Y+BallSize > paddle.Y
-}
-
-func bounceVelocity(ball Ball, paddle Rect) int {
-	ballCenter := ball.Y + BallSize/2
-	paddleCenter := paddle.Y + PaddleHeight/2
-	offset := ballCenter - paddleCenter
-	velocity := offset / 8
-
-	if velocity == 0 {
-		if offset < 0 {
-			return -1
-		}
-		return 1
-	}
-
-	return clamp(velocity, -6, 6)
-}
-
-func clamp(value, minValue, maxValue int) int {
-	if value < minValue {
-		return minValue
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
-}
-
-func abs(value int) int {
-	if value < 0 {
-		return -value
-	}
-	return value
-}
-
-func (s *State) PushCommand(tick uint32, playerID uint8, input Axis) {
-	if s.CommandQueue[tick] == nil {
-		s.CommandQueue[tick] = &FrameInput{}
-	}
-	frame := s.CommandQueue[tick]
-
-	switch playerID {
-	case Player1:
-		frame.P1Input = input
-		frame.P1Ready = true
-	case Player2:
-		frame.P2Input = input
-		frame.P2Ready = true
-	}
-}
-
-func (s *State) checkGameOver() {
-	if s.LeftScore >= WinningScore {
-		s.Winner = Player1
-		s.GameOverTick = s.Tick
-		return
-	}
-
-	if s.RightScore >= WinningScore {
-		s.Winner = Player2
-		s.GameOverTick = s.Tick
-	}
+	return sim.NewState(player)
 }

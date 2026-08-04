@@ -13,8 +13,6 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
-const InputDelay = 3
-
 type GameScene struct {
 	state    *State
 	clientID int32
