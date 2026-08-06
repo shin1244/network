@@ -152,6 +152,8 @@ func (n *NetplaySession) ResendUnackedInputs() {
 
 <img width="512" height="288" alt="sf6 (1)" src="https://github.com/user-attachments/assets/b0e3c09e-4732-4f6c-8881-9504b65b1383" />
 
+<img width="400" height="294" alt="obs" src="https://github.com/user-attachments/assets/61097642-6e59-4aa3-b8d7-d01fa7c8b70f" />
+
 
 상태 대신 처음부터의 입력을 빠르게 재생해 현재 시점까지 따라가는 방식으로, 락스텝 덕분에 제 프로젝트도 이미 같은 조건을 갖추고 있었습니다.
 
